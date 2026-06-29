@@ -1051,6 +1051,47 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Fehler", "Kein Token oder Benutzer. Bitte verbinde dich erneut.")
             return
 
+        local_branch = self.repo_obj.active_branch.name
+        target_branch = local_branch  # Standard: gleicher Name auf dem Remote
+
+        # Weicht der lokale Branch vom Standard-Branch auf GitHub ab (z.B.
+        # lokal 'master', GitHub 'main'), VORHER fragen statt nur danach zu
+        # warnen. So landet der Push dort, wo der Nutzer ihn auf GitHub
+        # tatsächlich sehen will.
+        default_branch = None
+        if self.selected_repo is not None:
+            try:
+                default_branch = self.selected_repo.default_branch
+            except Exception:
+                default_branch = None
+
+        if default_branch and local_branch != default_branch:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setWindowTitle("Branch-Abweichung")
+            box.setText(
+                f"Der lokale Branch heißt '{local_branch}', der Standard-Branch "
+                f"dieses Repositories auf GitHub ist aber '{default_branch}'.\n\n"
+                "Wohin soll gepusht werden?"
+            )
+            btn_default = box.addButton(
+                f"Auf '{default_branch}' pushen (empfohlen)", QMessageBox.ButtonRole.AcceptRole
+            )
+            btn_same = box.addButton(
+                f"Auf '{local_branch}' pushen", QMessageBox.ButtonRole.ActionRole
+            )
+            box.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(btn_default)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked == btn_default:
+                target_branch = default_branch
+            elif clicked == btn_same:
+                target_branch = local_branch
+            else:
+                self.status_bar.showMessage("Push abgebrochen")
+                return
+
         self.status_bar.showMessage("Push wird ausgeführt...")
         self.push_btn.setEnabled(False)
 
@@ -1059,11 +1100,12 @@ class MainWindow(QMainWindow):
             # URL auf korrekte authentifizierte Version setzen
             self._ensure_auth_url(origin)
             branch = self.repo_obj.active_branch
+            refspec = f"{branch.name}:{target_branch}"
             try:
-                push_infos = origin.push(refspec=f"{branch.name}:{branch.name}")
+                push_infos = origin.push(refspec=refspec)
             except GitCommandError as e:
                 if "does not exist" in str(e) or "upstream" in str(e):
-                    push_infos = origin.push(refspec=f"{branch.name}:{branch.name}", set_upstream=True)
+                    push_infos = origin.push(refspec=refspec, set_upstream=True)
                 else:
                     raise
 
@@ -1101,30 +1143,10 @@ class MainWindow(QMainWindow):
                     "Weboberfläche). Erst 'Pull von GitHub' ausführen, dann erneut pushen."
                 )
 
-            # Hinweis, falls auf einen anderen als den Standard-Branch gepusht wurde.
-            # Das erklärt den häufigsten Fall von "Push erfolgreich, aber alte
-            # Dateien auf GitHub": Der Standard-Branch (z.B. 'main') auf GitHub
-            # zeigt weiterhin den alten Stand, weil tatsächlich auf einen
-            # abweichenden lokalen Branch (z.B. 'master') gepusht wurde.
-            default_branch_warning = None
-            if self.selected_repo is not None:
-                try:
-                    default_branch = self.selected_repo.default_branch
-                    if default_branch and branch.name != default_branch:
-                        default_branch_warning = (
-                            f"Gepusht wurde auf Branch '{branch.name}'. Der Standard-"
-                            f"Branch dieses Repositories auf GitHub ist jedoch "
-                            f"'{default_branch}'. Auf der GitHub-Startseite des Repos "
-                            f"wird daher weiterhin der Inhalt von '{default_branch}' "
-                            f"angezeigt."
-                        )
-                except Exception:
-                    pass
-
             return {
-                "branch": branch.name,
+                "local_branch": branch.name,
+                "remote_branch": target_branch,
                 "up_to_date": up_to_date,
-                "warning": default_branch_warning,
             }
 
         self.worker = GithubWorker(do_push)
@@ -1134,24 +1156,25 @@ class MainWindow(QMainWindow):
 
     def _on_push_finished(self, result):
         self.push_btn.setEnabled(True)
-        branch = result.get("branch", "?")
+        local_branch = result.get("local_branch", "?")
+        remote_branch = result.get("remote_branch", local_branch)
 
         if result.get("up_to_date"):
             self.status_bar.showMessage(
-                f"Push: Branch '{branch}' war bereits aktuell – keine neuen Commits"
+                f"Push: Branch '{remote_branch}' war bereits aktuell – keine neuen Commits"
             )
             QMessageBox.information(
                 self,
                 "Bereits aktuell",
-                f"Es gab keine neuen Commits auf Branch '{branch}', die übertragen "
+                f"Es gab keine neuen Commits, die nach '{remote_branch}' übertragen "
                 "werden konnten.\n\nWurden die Änderungen vorher committet?"
             )
+        elif local_branch != remote_branch:
+            self.status_bar.showMessage(
+                f"Push erfolgreich: '{local_branch}' → GitHub-Branch '{remote_branch}'"
+            )
         else:
-            self.status_bar.showMessage(f"Push erfolgreich (Branch: {branch})")
-
-        warning = result.get("warning")
-        if warning:
-            QMessageBox.warning(self, "Branch-Hinweis", warning)
+            self.status_bar.showMessage(f"Push erfolgreich (Branch: {remote_branch})")
 
     def _on_push_error(self, error_msg):
         self.push_btn.setEnabled(True)
