@@ -2,7 +2,7 @@
 
 Ein PyQt6-Desktop-Tool für Linux, mit dem sich GitHub-Repositories und lokale Git-Repositories verwalten lassen – ganz ohne Terminal. Login per Personal Access Token, Repositories erstellen/löschen/klonen, lokale Ordner verknüpfen, committen, pushen und pullen.
 
-![GitHub Repository Manager – Screenshot](screenshot.png)
+![GitHub Repository Manager – Screenshot](screenshots/github-manager.webp)
 
 ## Features
 
