@@ -1195,17 +1195,65 @@ class MainWindow(QMainWindow):
         def do_pull():
             origin = self.repo_obj.remotes.origin
             self._ensure_auth_url(origin)
-            origin.pull()
-            return True
+            local_branch = self.repo_obj.active_branch.name
+
+            # Remote-Branch ermitteln: bevorzugt den Standard-Branch des
+            # ausgewählten GitHub-Repositories (passend zur Push-Logik), da
+            # dort die eigentlich relevanten Commits liegen, auch wenn der
+            # lokale Branch anders heißt (z.B. 'master' vs. 'main').
+            remote_branch = local_branch
+            if self.selected_repo is not None:
+                try:
+                    default_branch = self.selected_repo.default_branch
+                    if default_branch:
+                        remote_branch = default_branch
+                except Exception:
+                    pass
+
+            origin.fetch()
+
+            try:
+                origin.pull(refspec=remote_branch)
+            except GitCommandError as e:
+                msg = str(e)
+                if "unrelated histories" in msg.lower() or "refusing to merge" in msg.lower():
+                    # Tritt typischerweise auf, wenn ein lokal frisch initialisiertes
+                    # Repository mit einem bereits befüllten GitHub-Repository
+                    # verknüpft wurde (z.B. README über die Weboberfläche erstellt).
+                    try:
+                        self.repo_obj.git.pull(
+                            "origin", remote_branch, allow_unrelated_histories=True
+                        )
+                    except GitCommandError as e2:
+                        if "conflict" in str(e2).lower():
+                            raise RuntimeError(
+                                "Merge-Konflikt beim Zusammenführen der bisher "
+                                "unabhängigen Historien: dieselben Dateien wurden "
+                                "lokal und auf GitHub unterschiedlich geändert.\n\n"
+                                "Bitte im Terminal im Projektordner mit 'git status' "
+                                "prüfen, Konflikte manuell lösen und anschließend "
+                                "committen."
+                            )
+                        raise RuntimeError(f"Pull fehlgeschlagen:\n{e2}")
+                elif "conflict" in msg.lower():
+                    raise RuntimeError(
+                        "Merge-Konflikt beim Pull. Bitte im Terminal im "
+                        "Projektordner mit 'git status' prüfen, Konflikte "
+                        "manuell lösen und anschließend committen."
+                    )
+                else:
+                    raise
+
+            return remote_branch
 
         self.worker = GithubWorker(do_pull)
         self.worker.finished.connect(self._on_pull_finished)
         self.worker.error.connect(self._on_pull_error)
         self.worker.start()
 
-    def _on_pull_finished(self, _):
+    def _on_pull_finished(self, remote_branch):
         self.pull_btn.setEnabled(True)
-        self.status_bar.showMessage("Pull erfolgreich")
+        self.status_bar.showMessage(f"Pull erfolgreich von '{remote_branch}'")
         if self.repo_obj:
             self.branch_label.setText(f"Branch: {self.repo_obj.active_branch.name}")
 
