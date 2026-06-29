@@ -134,9 +134,11 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem,
     QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QTextEdit,
-    QCheckBox, QStatusBar, QGroupBox, QFileDialog, QInputDialog
+    QCheckBox, QStatusBar, QGroupBox, QFileDialog, QInputDialog,
+    QScrollArea
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QAction
 from github import Github, Auth
 from github.Repository import Repository
 import git
@@ -246,6 +248,215 @@ class GithubWorker(QThread):
             self.error.emit(str(e))
 
 
+class HelpDialog(QDialog):
+    """Benutzerhandbuch als scrollbarer Dialog."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Hilfe – GitHub Repository Manager")
+        self.setModal(True)
+        self.resize(680, 600)
+
+        layout = QVBoxLayout(self)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setSpacing(8)
+
+        help_text = QTextEdit()
+        help_text.setReadOnly(True)
+        help_text.setHtml("""
+<style>
+  body { font-family: sans-serif; font-size: 13px; }
+  h2 { color: #2a6099; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+  h3 { color: #1a4070; margin-top: 14px; margin-bottom: 4px; }
+  p, li { line-height: 1.6; }
+  ul { margin-top: 4px; }
+  code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+  .hinweis { background: #fffbe6; border-left: 4px solid #f0b429;
+             padding: 6px 10px; margin: 8px 0; border-radius: 3px; }
+  .tipp { background: #e8f4fd; border-left: 4px solid #2a6099;
+          padding: 6px 10px; margin: 8px 0; border-radius: 3px; }
+</style>
+<h2>GitHub Repository Manager – Benutzerhandbuch</h2>
+
+<h2>1. Erste Schritte – Login</h2>
+<p>Um die App zu nutzen, benötigst du einen GitHub-Account und einen
+<b>Personal Access Token (PAT)</b>.</p>
+<h3>Token erstellen</h3>
+<ul>
+  <li>Klicke auf <b>„Neuen Token erstellen"</b> – die GitHub-Einstellungsseite öffnet sich.</li>
+  <li>Wähle <b>„Generate new token (classic)"</b>.</li>
+  <li>Setze ein Ablaufdatum und aktiviere die Berechtigung <code>repo</code>.</li>
+  <li>Kopiere den generierten Token und füge ihn im Feld <b>„Personal Access Token"</b> ein.</li>
+</ul>
+<h3>Verbinden</h3>
+<ul>
+  <li>Benutzername und Token eingeben, dann <b>„Verbinden"</b> klicken.</li>
+  <li>Bei Erfolg erscheinen deine Repositories in der Liste.</li>
+  <li>Zugangsdaten werden lokal gespeichert (<code>~/.config/github_manager/</code>)
+      und beim nächsten Start automatisch geladen.</li>
+</ul>
+<div class="tipp">
+  <b>Tipp:</b> Mit <b>„Token prüfen"</b> kannst du jederzeit die Gültigkeit
+  deines Tokens testen, ohne dich neu zu verbinden.
+</div>
+
+<h2>2. Repositories verwalten</h2>
+<h3>Neues Repository erstellen</h3>
+<ul>
+  <li>Klicke auf <b>„Neues Repository"</b>.</li>
+  <li>Namen und optionale Beschreibung eingeben, Sichtbarkeit wählen (öffentlich/privat).</li>
+  <li>Das Repository wird auf GitHub angelegt und erscheint sofort in der Liste.</li>
+</ul>
+<h3>Repository löschen</h3>
+<ul>
+  <li>Repository in der Liste auswählen, dann <b>„Repository löschen"</b> klicken.</li>
+  <li>Eine Sicherheitsabfrage verhindert versehentliches Löschen.</li>
+</ul>
+<div class="hinweis">
+  <b>Achtung:</b> Das Löschen entfernt das Repository unwiderruflich von GitHub,
+  einschliesslich aller Commits, Issues und Pull Requests.
+</div>
+<h3>Liste aktualisieren</h3>
+<ul>
+  <li><b>„Aktualisieren"</b> lädt die Repository-Liste neu von GitHub.</li>
+</ul>
+
+<h2>3. Lokales Repository</h2>
+<h3>Standardordner setzen</h3>
+<p>Der Standardordner ist der Basisordner, in dem Repositories geklont oder
+initialisiert werden.</p>
+<ul>
+  <li><b>„Als Standard setzen"</b> – übernimmt den aktuell geladenen Repo-Pfad als Standard.</li>
+  <li><b>„Ändern"</b> – öffnet einen Ordner-Auswahldialog.</li>
+</ul>
+<h3>Repository klonen</h3>
+<ul>
+  <li>Ein Repository in der Liste auswählen.</li>
+  <li><b>„Repository klonen"</b> klicken – der Inhalt wird in den Standardordner heruntergeladen.</li>
+  <li>Das geklonte Repository wird automatisch als aktives lokales Repo geladen.</li>
+</ul>
+<h3>Neues lokales Repository initialisieren</h3>
+<ul>
+  <li>Ein <b>GitHub-Repository</b> in der Liste auswählen (Ziel für den späteren Push).</li>
+  <li><b>„Neues lokales Repo"</b> klicken.</li>
+  <li>Es wird ein neuer Ordner im Standardverzeichnis erstellt, <code>git init</code>
+      ausgeführt und <code>origin</code> auf das gewählte GitHub-Repository gesetzt.</li>
+</ul>
+<div class="hinweis">
+  <b>Achtung:</b> Falls das GitHub-Repository bereits Dateien enthält (z.B. ein
+  automatisch erstelltes README), ist <b>„Repository klonen"</b> der richtige Weg –
+  sonst entstehen divergente Historien.
+</div>
+<h3>Vorhandenes lokales Repository laden</h3>
+<ul>
+  <li><b>„Lokales Repo laden"</b> öffnet einen Ordner-Auswahldialog.</li>
+  <li>Wähle einen Ordner, der bereits ein <code>.git</code>-Verzeichnis enthält.</li>
+</ul>
+
+<h2>4. Commit, Push und Pull</h2>
+<h3>Commit</h3>
+<ul>
+  <li>Eine Commit-Nachricht im Textfeld eingeben.</li>
+  <li><b>„Commit"</b> klicken – alle Änderungen im Repo werden gestaged und committet.</li>
+</ul>
+<div class="hinweis">
+  <b>„Keine Änderungen gefunden"</b> bedeutet: Im geladenen Ordner gibt es keine
+  geänderten Dateien. Prüfe, ob du den richtigen Ordner geladen hast oder ob
+  Dateien durch <code>.gitignore</code> ausgeschlossen sind.
+</div>
+<h3>Push</h3>
+<ul>
+  <li><b>„Push zu GitHub"</b> überträgt die lokalen Commits auf GitHub.</li>
+  <li>Falls der lokale Branch anders heisst als der Standard-Branch auf GitHub
+      (z.B. <code>master</code> vs. <code>main</code>), erscheint eine Rückfrage.</li>
+  <li>Bei einem abgelehnten Push (<b>non-fast-forward</b>) bietet die App an,
+      automatisch einen Pull auszuführen.</li>
+</ul>
+<h3>Pull</h3>
+<ul>
+  <li><b>„Pull von GitHub"</b> holt die neuesten Commits vom Remote und merged sie lokal.</li>
+  <li>Bei Merge-Konflikten erscheint eine Meldung – die Konflikte müssen manuell
+      im Terminal gelöst werden (<code>git status</code>, Dateien bearbeiten,
+      dann committen).</li>
+</ul>
+<div class="tipp">
+  <b>Empfohlener Arbeitsablauf:</b><br>
+  1. <b>Pull</b> ausführen (Remote-Änderungen holen)<br>
+  2. Dateien bearbeiten<br>
+  3. <b>Commit</b> mit aussagekräftiger Nachricht<br>
+  4. <b>Push</b> zu GitHub
+</div>
+
+<h2>5. Häufige Fehlermeldungen</h2>
+<h3>„Need to specify how to reconcile divergent branches"</h3>
+<p>Lokaler und Remote-Branch haben eine unterschiedliche Commit-Historie.
+Führe zuerst einen <b>Pull</b> aus.</p>
+<h3>„rejected (non-fast-forward)"</h3>
+<p>GitHub hat Commits, die lokal fehlen (z.B. direkte Änderungen auf der Weboberfläche).
+Erst <b>Pull</b>, dann erneut <b>Push</b>.</p>
+<h3>„Keine Änderungen zum Committen"</h3>
+<p>Es gibt nichts zu committen. Mögliche Ursachen: falscher Ordner geladen,
+Dateien noch nicht gespeichert, oder durch <code>.gitignore</code> ausgeschlossen.</p>
+<h3>„Token ungültig / 401"</h3>
+<p>Der Token ist abgelaufen oder falsch. Neuen Token auf GitHub erstellen und eintragen.</p>
+        """)
+        content_layout.addWidget(help_text)
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+
+class AboutDialog(QDialog):
+    """Über-Dialog mit Version und Autor."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Über GitHub Repository Manager")
+        self.setModal(True)
+        self.setFixedSize(400, 260)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        title = QLabel("<b style='font-size:15px;'>GitHub Repository Manager</b>")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        version = QLabel("Version 1.06")
+        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(version)
+
+        separator = QLabel("<hr>")
+        layout.addWidget(separator)
+
+        author = QLabel(
+            "<b>Autor:</b> Jürg Rechsteiner<br>"
+            "<b>Website:</b> <a href='https://www.computer-experte.ch'>computer-experte.ch</a><br>"
+            "<b>Region:</b> St. Gallen / Thurgau"
+        )
+        author.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        author.setOpenExternalLinks(True)
+        author.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(author)
+
+        desc = QLabel(
+            "<br><i>Ein PyQt6-basierter GitHub Repository Manager<br>"
+            "für Linux – entwickelt mit Python und GitPython.</i>"
+        )
+        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btn_box.accepted.connect(self.accept)
+        layout.addWidget(btn_box)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -266,6 +477,17 @@ class MainWindow(QMainWindow):
         self.load_saved_credentials()
         self.load_settings()
         self.status_bar.showMessage("Bereit")
+
+    # ------------------------------------------------------------------
+    # Hilfe / Über
+    # ------------------------------------------------------------------
+    def on_show_help(self):
+        dialog = HelpDialog(self)
+        dialog.exec()
+
+    def on_show_about(self):
+        dialog = AboutDialog(self)
+        dialog.exec()
 
     # ------------------------------------------------------------------
     # Hilfsmethode: Remote-URL immer korrekt mit Token setzen
@@ -295,6 +517,21 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
+
+        # ---------- Menüleiste ----------
+        menubar = self.menuBar()
+        help_menu = menubar.addMenu("&Hilfe")
+
+        action_help = QAction("&Benutzerhandbuch", self)
+        action_help.setShortcut("F1")
+        action_help.triggered.connect(self.on_show_help)
+        help_menu.addAction(action_help)
+
+        help_menu.addSeparator()
+
+        action_about = QAction("&Über...", self)
+        action_about.triggered.connect(self.on_show_about)
+        help_menu.addAction(action_about)
 
         # ---------- Login ----------
         login_group = QGroupBox("GitHub Login")
