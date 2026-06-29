@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-GitHub Repository Manager – Version 3
+GitHub Repository Manager
 Mit korrekter Remote-URL-Behandlung: Entfernt doppelte Token.
 Mit Push-Ergebnis-Prüfung: Erkennt von GitHub abgelehnte oder
 folgenlose Pushes, statt fälschlich "Erfolg" zu melden.
@@ -249,7 +249,7 @@ class GithubWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("GitHub Repository Manager v2")
+        self.setWindowTitle("GitHub Repository Manager 1.06")
         self.setMinimumSize(650, 650)
 
         self.github = None
@@ -1013,11 +1013,16 @@ class MainWindow(QMainWindow):
         def do_commit():
             self.repo_obj.git.add(A=True)
             # Prüfen, ob nach dem Staging überhaupt etwas zu committen ist.
-            # Ohne diese Prüfung erzeugt GitPython klaglos einen leeren Commit,
-            # was den Eindruck erweckt, es sei alles ok – tatsächlich wurden
-            # aber keine Dateiänderungen aufgenommen (z.B. falscher Ordner
-            # geladen oder Dateien per .gitignore ausgeschlossen).
-            if not self.repo_obj.is_dirty(index=True, working_tree=False, untracked_files=False):
+            # git status --porcelain ist die zuverlässigste Methode: liefert
+            # für jede staged Änderung eine Zeile (A, M, D, R …).
+            # GitPython-interne Methoden (index.diff, is_dirty) können im
+            # Worker-Thread veraltete Objekt-Zustände zurückgeben.
+            status_output = self.repo_obj.git.status(porcelain=True)
+            staged_lines = [
+                line for line in status_output.splitlines()
+                if line and line[0] != ' ' and line[0] != '?'
+            ]
+            if not staged_lines:
                 raise RuntimeError(
                     "Keine Änderungen zum Committen gefunden.\n"
                     "Prüfe, ob im richtigen Ordner gearbeitet wurde und ob die "
@@ -1179,7 +1184,20 @@ class MainWindow(QMainWindow):
     def _on_push_error(self, error_msg):
         self.push_btn.setEnabled(True)
         self.status_bar.showMessage("Push fehlgeschlagen")
-        QMessageBox.critical(self, "Fehler", f"Fehler beim Push:\n{error_msg}")
+        if "non-fast-forward" in error_msg or "rejected" in error_msg.lower():
+            reply = QMessageBox.critical(
+                self,
+                "Fehler",
+                f"Fehler beim Push:\n{error_msg}\n\n"
+                "Möchtest du jetzt einen Pull ausführen, um die Remote-Änderungen "
+                "zuerst zu holen und danach erneut zu pushen?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.on_pull()
+        else:
+            QMessageBox.critical(self, "Fehler", f"Fehler beim Push:\n{error_msg}")
 
     def on_pull(self):
         if not self.repo_obj:
@@ -1213,7 +1231,12 @@ class MainWindow(QMainWindow):
             origin.fetch()
 
             try:
-                origin.pull(refspec=remote_branch)
+                # Explizit --no-rebase übergeben, damit Git 2.27+ nicht mit
+                # "Need to specify how to reconcile divergent branches" abbricht.
+                # Merge ist die sichere Standardstrategie für GUI-Nutzer.
+                self.repo_obj.git.pull(
+                    "origin", remote_branch, no_rebase=True
+                )
             except GitCommandError as e:
                 msg = str(e)
                 if "unrelated histories" in msg.lower() or "refusing to merge" in msg.lower():
@@ -1222,7 +1245,8 @@ class MainWindow(QMainWindow):
                     # verknüpft wurde (z.B. README über die Weboberfläche erstellt).
                     try:
                         self.repo_obj.git.pull(
-                            "origin", remote_branch, allow_unrelated_histories=True
+                            "origin", remote_branch,
+                            allow_unrelated_histories=True, no_rebase=True
                         )
                     except GitCommandError as e2:
                         if "conflict" in str(e2).lower():
