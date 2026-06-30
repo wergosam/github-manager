@@ -6,6 +6,7 @@ GitHub Repository Manager
 Mit korrekter Remote-URL-Behandlung: Entfernt doppelte Token.
 Mit Push-Ergebnis-Prüfung: Erkennt von GitHub abgelehnte oder
 folgenlose Pushes, statt fälschlich "Erfolg" zu melden.
+Mehrsprachig (DE/EN, erweiterbar über translations.py).
 """
 
 import sys
@@ -16,6 +17,8 @@ import time
 import datetime
 import webbrowser
 import re
+
+from translations import tr, AVAILABLE_LANGUAGES, get_current_language, set_language
 
 # ----------------------------------------------------------------------
 # 1. Abhängigkeiten prüfen und ggf. installieren
@@ -67,23 +70,23 @@ def install_packages(distro, missing_modules):
     pip_cmd = [sys.executable, '-m', 'pip', 'install', '--user', 'PyQt6', 'PyGithub', 'GitPython']
 
     if system_cmd:
-        print(f"\nVersuche Installation mit Systempaketmanager: {' '.join(system_cmd)}")
+        print(tr("deps_try_system_pkg", cmd=' '.join(system_cmd)))
         try:
             subprocess.check_call(system_cmd)
-            print("Systeminstallation erfolgreich.")
+            print(tr("deps_system_success"))
             return True
         except (subprocess.CalledProcessError, FileNotFoundError):
-            print("Systeminstallation fehlgeschlagen. Versuche jetzt pip --user...")
+            print(tr("deps_system_failed_try_pip"))
     else:
-        print("Kein Systempaketmanager erkannt. Verwende pip --user.")
+        print(tr("deps_no_system_mgr"))
 
-    print(f"\nFühre aus: {' '.join(pip_cmd)}")
+    print(tr("deps_running", cmd=' '.join(pip_cmd)))
     try:
         subprocess.check_call(pip_cmd)
-        print("pip-Installation erfolgreich.")
+        print(tr("deps_pip_success"))
         return True
     except subprocess.CalledProcessError:
-        print("pip-Installation fehlgeschlagen.")
+        print(tr("deps_pip_failed"))
         return False
 
 def check_and_install_dependencies():
@@ -105,24 +108,24 @@ def check_and_install_dependencies():
         return
 
     print("\n" + "="*60)
-    print("  FEHLENDE ABHÄNGIGKEITEN")
+    print("  " + tr("deps_header"))
     print("="*60)
-    print(f"Folgende Module werden benötigt, sind aber nicht installiert: {', '.join(missing)}")
+    print(tr("deps_needed", modules=', '.join(missing)))
     distro = detect_distro()
-    print(f"Erkannte Distribution: {distro}")
+    print(tr("deps_distro", distro=distro))
 
-    answer = input("\nMöchtest du die fehlenden Pakete automatisch installieren lassen? (j/N): ").strip().lower()
+    answer = input(tr("deps_prompt")).strip().lower()
     if answer not in ('j', 'ja', 'y', 'yes'):
-        print("Installation abgelehnt. Bitte installiere die Pakete manuell und starte das Skript neu.")
+        print(tr("deps_declined"))
         sys.exit(1)
 
     success = install_packages(distro, missing)
     if success:
-        print("\nInstallation abgeschlossen. Starte das Skript neu...")
+        print(tr("deps_install_done_restart"))
         time.sleep(1)
         os.execv(sys.executable, [sys.executable] + sys.argv)
     else:
-        print("\nInstallation fehlgeschlagen. Bitte installiere die Pakete manuell und starte das Skript neu.")
+        print(tr("deps_install_failed_manual"))
         sys.exit(1)
 
 check_and_install_dependencies()
@@ -138,7 +141,7 @@ from PyQt6.QtWidgets import (
     QScrollArea
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QActionGroup
 from github import Github, Auth
 from github.Repository import Repository
 import git
@@ -177,7 +180,7 @@ def clear_config():
     if os.path.exists(CONFIG_FILE):
         os.remove(CONFIG_FILE)
 
-# Settings für Standardordner
+# Settings für Standardordner (und Sprache, siehe translations.py)
 def load_settings():
     if not os.path.exists(SETTINGS_FILE):
         return {}
@@ -198,21 +201,21 @@ def save_settings(settings):
 class NewRepoDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Neues Repository erstellen")
+        self.setWindowTitle(tr("dlg_newrepo_title"))
         self.setModal(True)
         self.resize(400, 300)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("Repository-Name")
-        form.addRow("Name:", self.name_edit)
+        self.name_edit.setPlaceholderText(tr("dlg_newrepo_name_placeholder"))
+        form.addRow(tr("dlg_newrepo_name_label"), self.name_edit)
         self.desc_edit = QTextEdit()
-        self.desc_edit.setPlaceholderText("Beschreibung (optional)")
+        self.desc_edit.setPlaceholderText(tr("dlg_newrepo_desc_placeholder"))
         self.desc_edit.setMaximumHeight(100)
-        form.addRow("Beschreibung:", self.desc_edit)
-        self.private_check = QCheckBox("Privat")
-        form.addRow("Sichtbarkeit:", self.private_check)
+        form.addRow(tr("dlg_newrepo_desc_label"), self.desc_edit)
+        self.private_check = QCheckBox(tr("dlg_newrepo_private_checkbox"))
+        form.addRow(tr("dlg_newrepo_visibility_label"), self.private_check)
         layout.addLayout(form)
 
         button_box = QDialogButtonBox(
@@ -252,7 +255,7 @@ class HelpDialog(QDialog):
     """Benutzerhandbuch als scrollbarer Dialog."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Hilfe – GitHub Repository Manager")
+        self.setWindowTitle(tr("dlg_help_title"))
         self.setModal(True)
         self.resize(680, 600)
 
@@ -266,143 +269,7 @@ class HelpDialog(QDialog):
 
         help_text = QTextEdit()
         help_text.setReadOnly(True)
-        help_text.setHtml("""
-<style>
-  body { font-family: sans-serif; font-size: 13px; }
-  h2 { color: #2a6099; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
-  h3 { color: #1a4070; margin-top: 14px; margin-bottom: 4px; }
-  p, li { line-height: 1.6; }
-  ul { margin-top: 4px; }
-  code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
-  .hinweis { background: #fffbe6; border-left: 4px solid #f0b429;
-             padding: 6px 10px; margin: 8px 0; border-radius: 3px; }
-  .tipp { background: #e8f4fd; border-left: 4px solid #2a6099;
-          padding: 6px 10px; margin: 8px 0; border-radius: 3px; }
-</style>
-<h2>GitHub Repository Manager – Benutzerhandbuch</h2>
-
-<h2>1. Erste Schritte – Login</h2>
-<p>Um die App zu nutzen, benötigst du einen GitHub-Account und einen
-<b>Personal Access Token (PAT)</b>.</p>
-<h3>Token erstellen</h3>
-<ul>
-  <li>Klicke auf <b>„Neuen Token erstellen"</b> – die GitHub-Einstellungsseite öffnet sich.</li>
-  <li>Wähle <b>„Generate new token (classic)"</b>.</li>
-  <li>Setze ein Ablaufdatum und aktiviere die Berechtigung <code>repo</code>.</li>
-  <li>Kopiere den generierten Token und füge ihn im Feld <b>„Personal Access Token"</b> ein.</li>
-</ul>
-<h3>Verbinden</h3>
-<ul>
-  <li>Benutzername und Token eingeben, dann <b>„Verbinden"</b> klicken.</li>
-  <li>Bei Erfolg erscheinen deine Repositories in der Liste.</li>
-  <li>Zugangsdaten werden lokal gespeichert (<code>~/.config/github_manager/</code>)
-      und beim nächsten Start automatisch geladen.</li>
-</ul>
-<div class="tipp">
-  <b>Tipp:</b> Mit <b>„Token prüfen"</b> kannst du jederzeit die Gültigkeit
-  deines Tokens testen, ohne dich neu zu verbinden.
-</div>
-
-<h2>2. Repositories verwalten</h2>
-<h3>Neues Repository erstellen</h3>
-<ul>
-  <li>Klicke auf <b>„Neues Repository"</b>.</li>
-  <li>Namen und optionale Beschreibung eingeben, Sichtbarkeit wählen (öffentlich/privat).</li>
-  <li>Das Repository wird auf GitHub angelegt und erscheint sofort in der Liste.</li>
-</ul>
-<h3>Repository löschen</h3>
-<ul>
-  <li>Repository in der Liste auswählen, dann <b>„Repository löschen"</b> klicken.</li>
-  <li>Eine Sicherheitsabfrage verhindert versehentliches Löschen.</li>
-</ul>
-<div class="hinweis">
-  <b>Achtung:</b> Das Löschen entfernt das Repository unwiderruflich von GitHub,
-  einschliesslich aller Commits, Issues und Pull Requests.
-</div>
-<h3>Liste aktualisieren</h3>
-<ul>
-  <li><b>„Aktualisieren"</b> lädt die Repository-Liste neu von GitHub.</li>
-</ul>
-
-<h2>3. Lokales Repository</h2>
-<h3>Standardordner setzen</h3>
-<p>Der Standardordner ist der Basisordner, in dem Repositories geklont oder
-initialisiert werden.</p>
-<ul>
-  <li><b>„Als Standard setzen"</b> – übernimmt den aktuell geladenen Repo-Pfad als Standard.</li>
-  <li><b>„Ändern"</b> – öffnet einen Ordner-Auswahldialog.</li>
-</ul>
-<h3>Repository klonen</h3>
-<ul>
-  <li>Ein Repository in der Liste auswählen.</li>
-  <li><b>„Repository klonen"</b> klicken – der Inhalt wird in den Standardordner heruntergeladen.</li>
-  <li>Das geklonte Repository wird automatisch als aktives lokales Repo geladen.</li>
-</ul>
-<h3>Neues lokales Repository initialisieren</h3>
-<ul>
-  <li>Ein <b>GitHub-Repository</b> in der Liste auswählen (Ziel für den späteren Push).</li>
-  <li><b>„Neues lokales Repo"</b> klicken.</li>
-  <li>Es wird ein neuer Ordner im Standardverzeichnis erstellt, <code>git init</code>
-      ausgeführt und <code>origin</code> auf das gewählte GitHub-Repository gesetzt.</li>
-</ul>
-<div class="hinweis">
-  <b>Achtung:</b> Falls das GitHub-Repository bereits Dateien enthält (z.B. ein
-  automatisch erstelltes README), ist <b>„Repository klonen"</b> der richtige Weg –
-  sonst entstehen divergente Historien.
-</div>
-<h3>Vorhandenes lokales Repository laden</h3>
-<ul>
-  <li><b>„Lokales Repo laden"</b> öffnet einen Ordner-Auswahldialog.</li>
-  <li>Wähle einen Ordner, der bereits ein <code>.git</code>-Verzeichnis enthält.</li>
-</ul>
-
-<h2>4. Commit, Push und Pull</h2>
-<h3>Commit</h3>
-<ul>
-  <li>Eine Commit-Nachricht im Textfeld eingeben.</li>
-  <li><b>„Commit"</b> klicken – alle Änderungen im Repo werden gestaged und committet.</li>
-</ul>
-<div class="hinweis">
-  <b>„Keine Änderungen gefunden"</b> bedeutet: Im geladenen Ordner gibt es keine
-  geänderten Dateien. Prüfe, ob du den richtigen Ordner geladen hast oder ob
-  Dateien durch <code>.gitignore</code> ausgeschlossen sind.
-</div>
-<h3>Push</h3>
-<ul>
-  <li><b>„Push zu GitHub"</b> überträgt die lokalen Commits auf GitHub.</li>
-  <li>Falls der lokale Branch anders heisst als der Standard-Branch auf GitHub
-      (z.B. <code>master</code> vs. <code>main</code>), erscheint eine Rückfrage.</li>
-  <li>Bei einem abgelehnten Push (<b>non-fast-forward</b>) bietet die App an,
-      automatisch einen Pull auszuführen.</li>
-</ul>
-<h3>Pull</h3>
-<ul>
-  <li><b>„Pull von GitHub"</b> holt die neuesten Commits vom Remote und merged sie lokal.</li>
-  <li>Bei Merge-Konflikten erscheint eine Meldung – die Konflikte müssen manuell
-      im Terminal gelöst werden (<code>git status</code>, Dateien bearbeiten,
-      dann committen).</li>
-</ul>
-<div class="tipp">
-  <b>Empfohlener Arbeitsablauf:</b><br>
-  1. <b>Pull</b> ausführen (Remote-Änderungen holen)<br>
-  2. Dateien bearbeiten<br>
-  3. <b>Commit</b> mit aussagekräftiger Nachricht<br>
-  4. <b>Push</b> zu GitHub
-</div>
-
-<h2>5. Häufige Fehlermeldungen</h2>
-<h3>„Need to specify how to reconcile divergent branches"</h3>
-<p>Lokaler und Remote-Branch haben eine unterschiedliche Commit-Historie.
-Führe zuerst einen <b>Pull</b> aus.</p>
-<h3>„rejected (non-fast-forward)"</h3>
-<p>GitHub hat Commits, die lokal fehlen (z.B. direkte Änderungen auf der Weboberfläche).
-Erst <b>Pull</b>, dann erneut <b>Push</b>.</p>
-<h3>„Keine Änderungen zum Committen"</h3>
-<p>Es gibt nichts zu committen. Mögliche Ursachen: falscher Ordner geladen,
-Dateien noch nicht gespeichert, oder durch <code>.gitignore</code> ausgeschlossen.</p>
-<h3>„Token ungültig / 401"</h3>
-<p>Der Token ist abgelaufen oder falsch. Neuen Token auf GitHub erstellen und eintragen.</p>
-        """)
+        help_text.setHtml(tr("help_html"))
         content_layout.addWidget(help_text)
         scroll.setWidget(content)
         layout.addWidget(scroll)
@@ -416,38 +283,31 @@ class AboutDialog(QDialog):
     """Über-Dialog mit Version und Autor."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Über GitHub Repository Manager")
+        self.setWindowTitle(tr("dlg_about_title"))
         self.setModal(True)
         self.setFixedSize(400, 260)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        title = QLabel("<b style='font-size:15px;'>GitHub Repository Manager</b>")
+        title = QLabel(f"<b style='font-size:15px;'>{tr('about_app_title')}</b>")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        version = QLabel("Version 1.06")
+        version = QLabel(tr("about_version"))
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version)
 
         separator = QLabel("<hr>")
         layout.addWidget(separator)
 
-        author = QLabel(
-            "<b>Autor:</b> Jürg Rechsteiner<br>"
-            "<b>Website:</b> <a href='https://www.computer-experte.ch'>computer-experte.ch</a><br>"
-            "<b>Region:</b> St. Gallen / Thurgau"
-        )
+        author = QLabel(tr("about_author_block"))
         author.setAlignment(Qt.AlignmentFlag.AlignCenter)
         author.setOpenExternalLinks(True)
         author.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(author)
 
-        desc = QLabel(
-            "<br><i>Ein PyQt6-basierter GitHub Repository Manager<br>"
-            "für Linux – entwickelt mit Python und GitPython.</i>"
-        )
+        desc = QLabel(tr("about_desc"))
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc.setWordWrap(True)
         layout.addWidget(desc)
@@ -460,7 +320,7 @@ class AboutDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("GitHub Repository Manager 1.06")
+        self.setWindowTitle(tr("main_window_title"))
         self.setMinimumSize(650, 650)
 
         self.github = None
@@ -476,7 +336,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.load_saved_credentials()
         self.load_settings()
-        self.status_bar.showMessage("Bereit")
+        self.status_bar.showMessage(tr("status_ready"))
 
     # ------------------------------------------------------------------
     # Hilfe / Über
@@ -488,6 +348,85 @@ class MainWindow(QMainWindow):
     def on_show_about(self):
         dialog = AboutDialog(self)
         dialog.exec()
+
+    # ------------------------------------------------------------------
+    # Sprache
+    # ------------------------------------------------------------------
+    def on_change_language(self, lang_code):
+        if lang_code == get_current_language():
+            return
+        set_language(lang_code)
+        self.retranslate_ui()
+
+    def retranslate_ui(self):
+        """Aktualisiert alle sichtbaren Texte auf die aktuell aktive Sprache,
+        ohne dass die Anwendung neu gestartet werden muss."""
+        self.setWindowTitle(tr("main_window_title"))
+
+        # Menü
+        self.help_menu.setTitle(tr("menu_help"))
+        self.action_help.setText(tr("menu_action_manual"))
+        self.action_about.setText(tr("menu_action_about"))
+        self.language_menu.setTitle(tr("menu_language"))
+
+        # Login
+        self.login_group.setTitle(tr("login_group_title"))
+        self.user_label.setText(tr("login_username_label"))
+        self.user_edit.setPlaceholderText(tr("login_username_placeholder"))
+        self.user_edit.setToolTip(tr("login_username_tooltip"))
+        self.token_label.setText(tr("login_token_label"))
+        self.token_edit.setPlaceholderText(tr("login_token_placeholder"))
+        self.token_edit.setToolTip(tr("login_token_tooltip"))
+        self.connect_btn.setText(tr("btn_connect"))
+        self.connect_btn.setToolTip(tr("btn_connect_tooltip"))
+        self.check_token_btn.setText(tr("btn_check_token"))
+        self.check_token_btn.setToolTip(tr("btn_check_token_tooltip"))
+        self.create_token_btn.setText(tr("btn_create_token"))
+        self.create_token_btn.setToolTip(tr("btn_create_token_tooltip"))
+
+        # Repository-Liste
+        self.list_group.setTitle(tr("repolist_group_title"))
+        self.repo_list.setToolTip(tr("repolist_tooltip"))
+        self.new_btn.setText(tr("btn_new_repo"))
+        self.new_btn.setToolTip(tr("btn_new_repo_tooltip"))
+        self.delete_btn.setText(tr("btn_delete_repo"))
+        self.delete_btn.setToolTip(tr("btn_delete_repo_tooltip"))
+        self.refresh_btn.setText(tr("btn_refresh"))
+        self.refresh_btn.setToolTip(tr("btn_refresh_tooltip"))
+
+        # Lokales Repository
+        self.local_group.setTitle(tr("local_group_title"))
+        self.default_folder_label.setText(tr("local_default_folder_label"))
+        self.default_folder_edit.setPlaceholderText(tr("local_default_folder_placeholder"))
+        self.set_default_btn.setText(tr("btn_set_default"))
+        self.set_default_btn.setToolTip(tr("btn_set_default_tooltip"))
+        self.change_default_btn.setText(tr("btn_change_default"))
+        self.change_default_btn.setToolTip(tr("btn_change_default_tooltip"))
+        self.clone_btn.setText(tr("btn_clone"))
+        self.clone_btn.setToolTip(tr("btn_clone_tooltip"))
+        self.init_btn.setText(tr("btn_init"))
+        self.init_btn.setToolTip(tr("btn_init_tooltip"))
+        self.browse_btn.setText(tr("btn_browse"))
+        self.browse_btn.setToolTip(tr("btn_browse_tooltip"))
+        self.path_label.setText(tr("local_loaded_label"))
+        self.path_edit.setPlaceholderText(tr("local_loaded_placeholder"))
+        self.commit_label.setText(tr("local_commit_msg_label"))
+        self.commit_msg_edit.setPlaceholderText(tr("local_commit_msg_placeholder"))
+        self.commit_btn.setText(tr("btn_commit"))
+        self.commit_btn.setToolTip(tr("btn_commit_tooltip"))
+        self.push_btn.setText(tr("btn_push"))
+        self.push_btn.setToolTip(tr("btn_push_tooltip"))
+        self.pull_btn.setText(tr("btn_pull"))
+        self.pull_btn.setToolTip(tr("btn_pull_tooltip"))
+        self.link_remote_btn.setText(tr("btn_link_remote"))
+        self.link_remote_btn.setToolTip(tr("btn_link_remote_tooltip"))
+
+        if self.repo_obj:
+            self.branch_label.setText(tr("branch_label", branch=self.repo_obj.active_branch.name))
+        else:
+            self.branch_label.setText(tr("branch_label_empty"))
+
+        self.status_bar.showMessage(tr("status_ready"))
 
     # ------------------------------------------------------------------
     # Hilfsmethode: Remote-URL immer korrekt mit Token setzen
@@ -520,110 +459,128 @@ class MainWindow(QMainWindow):
 
         # ---------- Menüleiste ----------
         menubar = self.menuBar()
-        help_menu = menubar.addMenu("&Hilfe")
+        self.help_menu = menubar.addMenu(tr("menu_help"))
 
-        action_help = QAction("&Benutzerhandbuch", self)
-        action_help.setShortcut("F1")
-        action_help.triggered.connect(self.on_show_help)
-        help_menu.addAction(action_help)
+        self.action_help = QAction(tr("menu_action_manual"), self)
+        self.action_help.setShortcut("F1")
+        self.action_help.triggered.connect(self.on_show_help)
+        self.help_menu.addAction(self.action_help)
 
-        help_menu.addSeparator()
+        self.help_menu.addSeparator()
 
-        action_about = QAction("&Über...", self)
-        action_about.triggered.connect(self.on_show_about)
-        help_menu.addAction(action_about)
+        self.action_about = QAction(tr("menu_action_about"), self)
+        self.action_about.triggered.connect(self.on_show_about)
+        self.help_menu.addAction(self.action_about)
+
+        # ---------- Sprachmenü ----------
+        self.language_menu = menubar.addMenu(tr("menu_language"))
+        self.language_action_group = QActionGroup(self)
+        self.language_action_group.setExclusive(True)
+        current_lang = get_current_language()
+        for code, display_name in AVAILABLE_LANGUAGES.items():
+            lang_action = QAction(display_name, self)
+            lang_action.setCheckable(True)
+            lang_action.setChecked(code == current_lang)
+            lang_action.triggered.connect(
+                lambda checked, c=code: self.on_change_language(c)
+            )
+            self.language_action_group.addAction(lang_action)
+            self.language_menu.addAction(lang_action)
 
         # ---------- Login ----------
-        login_group = QGroupBox("GitHub Login")
-        login_layout = QVBoxLayout(login_group)
+        self.login_group = QGroupBox(tr("login_group_title"))
+        login_layout = QVBoxLayout(self.login_group)
 
         user_layout = QHBoxLayout()
-        user_layout.addWidget(QLabel("Benutzername:"))
+        self.user_label = QLabel(tr("login_username_label"))
+        user_layout.addWidget(self.user_label)
         self.user_edit = QLineEdit()
-        self.user_edit.setPlaceholderText("GitHub-Benutzername")
-        self.user_edit.setToolTip("Gib deinen GitHub-Benutzernamen ein")
+        self.user_edit.setPlaceholderText(tr("login_username_placeholder"))
+        self.user_edit.setToolTip(tr("login_username_tooltip"))
         user_layout.addWidget(self.user_edit)
         login_layout.addLayout(user_layout)
 
         token_layout = QHBoxLayout()
-        token_layout.addWidget(QLabel("Personal Access Token:"))
+        self.token_label = QLabel(tr("login_token_label"))
+        token_layout.addWidget(self.token_label)
         self.token_edit = QLineEdit()
-        self.token_edit.setPlaceholderText("ghp_...")
+        self.token_edit.setPlaceholderText(tr("login_token_placeholder"))
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.token_edit.setToolTip("Gib deinen Personal Access Token (PAT) ein.")
+        self.token_edit.setToolTip(tr("login_token_tooltip"))
         token_layout.addWidget(self.token_edit)
         login_layout.addLayout(token_layout)
 
         btn_login_layout = QHBoxLayout()
-        self.connect_btn = QPushButton("Verbinden")
-        self.connect_btn.setToolTip("Mit GitHub verbinden")
+        self.connect_btn = QPushButton(tr("btn_connect"))
+        self.connect_btn.setToolTip(tr("btn_connect_tooltip"))
         self.connect_btn.clicked.connect(self.on_connect)
         btn_login_layout.addWidget(self.connect_btn)
 
-        self.check_token_btn = QPushButton("Token prüfen")
-        self.check_token_btn.setToolTip("Prüft, ob der Token gültig ist")
+        self.check_token_btn = QPushButton(tr("btn_check_token"))
+        self.check_token_btn.setToolTip(tr("btn_check_token_tooltip"))
         self.check_token_btn.clicked.connect(self.on_check_token)
         self.check_token_btn.setEnabled(False)
         btn_login_layout.addWidget(self.check_token_btn)
 
-        self.create_token_btn = QPushButton("Neuen Token erstellen")
-        self.create_token_btn.setToolTip("Öffnet GitHub-Seite zum Erstellen eines Tokens")
+        self.create_token_btn = QPushButton(tr("btn_create_token"))
+        self.create_token_btn.setToolTip(tr("btn_create_token_tooltip"))
         self.create_token_btn.clicked.connect(self.on_create_token)
         btn_login_layout.addWidget(self.create_token_btn)
 
         login_layout.addLayout(btn_login_layout)
-        main_layout.addWidget(login_group)
+        main_layout.addWidget(self.login_group)
 
         # ---------- Repository-Liste ----------
-        list_group = QGroupBox("Repositorys")
-        list_layout = QVBoxLayout(list_group)
+        self.list_group = QGroupBox(tr("repolist_group_title"))
+        list_layout = QVBoxLayout(self.list_group)
 
         self.repo_list = QListWidget()
-        self.repo_list.setToolTip("Liste aller GitHub-Repositories")
+        self.repo_list.setToolTip(tr("repolist_tooltip"))
         self.repo_list.itemSelectionChanged.connect(self.on_repo_selected)
         list_layout.addWidget(self.repo_list)
 
         btn_layout = QHBoxLayout()
-        self.new_btn = QPushButton("Neues Repository")
-        self.new_btn.setToolTip("Erstellt ein neues Repository auf GitHub")
+        self.new_btn = QPushButton(tr("btn_new_repo"))
+        self.new_btn.setToolTip(tr("btn_new_repo_tooltip"))
         self.new_btn.clicked.connect(self.on_new_repo)
         self.new_btn.setEnabled(False)
         btn_layout.addWidget(self.new_btn)
 
-        self.delete_btn = QPushButton("Repository löschen")
-        self.delete_btn.setToolTip("Löscht das ausgewählte Repository")
+        self.delete_btn = QPushButton(tr("btn_delete_repo"))
+        self.delete_btn.setToolTip(tr("btn_delete_repo_tooltip"))
         self.delete_btn.clicked.connect(self.on_delete_repo)
         self.delete_btn.setEnabled(False)
         btn_layout.addWidget(self.delete_btn)
 
-        self.refresh_btn = QPushButton("Aktualisieren")
-        self.refresh_btn.setToolTip("Aktualisiert die Repository-Liste")
+        self.refresh_btn = QPushButton(tr("btn_refresh"))
+        self.refresh_btn.setToolTip(tr("btn_refresh_tooltip"))
         self.refresh_btn.clicked.connect(self.on_refresh)
         self.refresh_btn.setEnabled(False)
         btn_layout.addWidget(self.refresh_btn)
 
         list_layout.addLayout(btn_layout)
-        main_layout.addWidget(list_group)
+        main_layout.addWidget(self.list_group)
 
         # ---------- Lokales Repository ----------
-        local_group = QGroupBox("Lokales Repository")
-        local_layout = QVBoxLayout(local_group)
+        self.local_group = QGroupBox(tr("local_group_title"))
+        local_layout = QVBoxLayout(self.local_group)
 
         # Standardordner
         default_layout = QHBoxLayout()
-        default_layout.addWidget(QLabel("Standardordner:"))
+        self.default_folder_label = QLabel(tr("local_default_folder_label"))
+        default_layout.addWidget(self.default_folder_label)
         self.default_folder_edit = QLineEdit()
         self.default_folder_edit.setReadOnly(True)
-        self.default_folder_edit.setPlaceholderText("Kein Standardordner gesetzt")
+        self.default_folder_edit.setPlaceholderText(tr("local_default_folder_placeholder"))
         default_layout.addWidget(self.default_folder_edit)
 
-        self.set_default_btn = QPushButton("Als Standard setzen")
-        self.set_default_btn.setToolTip("Setzt aktuellen Ordner als Standard")
+        self.set_default_btn = QPushButton(tr("btn_set_default"))
+        self.set_default_btn.setToolTip(tr("btn_set_default_tooltip"))
         self.set_default_btn.clicked.connect(self.on_set_default_folder)
         default_layout.addWidget(self.set_default_btn)
 
-        self.change_default_btn = QPushButton("Ändern")
-        self.change_default_btn.setToolTip("Wählt neuen Standardordner")
+        self.change_default_btn = QPushButton(tr("btn_change_default"))
+        self.change_default_btn.setToolTip(tr("btn_change_default_tooltip"))
         self.change_default_btn.clicked.connect(self.on_change_default_folder)
         default_layout.addWidget(self.change_default_btn)
 
@@ -631,23 +588,20 @@ class MainWindow(QMainWindow):
 
         # Aktionen
         action_layout = QHBoxLayout()
-        self.clone_btn = QPushButton("Repository klonen")
-        self.clone_btn.setToolTip("Klonen des ausgewählten Repositories in den Standardordner")
+        self.clone_btn = QPushButton(tr("btn_clone"))
+        self.clone_btn.setToolTip(tr("btn_clone_tooltip"))
         self.clone_btn.clicked.connect(self.on_clone_repo)
         self.clone_btn.setEnabled(False)
         action_layout.addWidget(self.clone_btn)
 
-        self.init_btn = QPushButton("Neues Repo init")
-        self.init_btn.setToolTip(
-            "Erstellt ein neues lokales Git-Repository (git init) und verknüpft "
-            "es mit dem oben in der Liste ausgewählten GitHub-Repository"
-        )
+        self.init_btn = QPushButton(tr("btn_init"))
+        self.init_btn.setToolTip(tr("btn_init_tooltip"))
         self.init_btn.clicked.connect(self.on_init_repo)
         self.init_btn.setEnabled(False)
         action_layout.addWidget(self.init_btn)
 
-        self.browse_btn = QPushButton("Ordner auswählen")
-        self.browse_btn.setToolTip("Wählt einen lokalen Ordner als Git-Repository")
+        self.browse_btn = QPushButton(tr("btn_browse"))
+        self.browse_btn.setToolTip(tr("btn_browse_tooltip"))
         self.browse_btn.clicked.connect(self.on_browse_folder)
         self.browse_btn.setEnabled(False)
         action_layout.addWidget(self.browse_btn)
@@ -656,22 +610,24 @@ class MainWindow(QMainWindow):
 
         # Pfad
         path_layout = QHBoxLayout()
-        path_layout.addWidget(QLabel("Geladen:"))
+        self.path_label = QLabel(tr("local_loaded_label"))
+        path_layout.addWidget(self.path_label)
         self.path_edit = QLineEdit()
         self.path_edit.setReadOnly(True)
-        self.path_edit.setPlaceholderText("Kein Repository geladen")
+        self.path_edit.setPlaceholderText(tr("local_loaded_placeholder"))
         path_layout.addWidget(self.path_edit)
         local_layout.addLayout(path_layout)
 
         # Commit
         commit_layout = QHBoxLayout()
-        commit_layout.addWidget(QLabel("Commit-Nachricht:"))
+        self.commit_label = QLabel(tr("local_commit_msg_label"))
+        commit_layout.addWidget(self.commit_label)
         self.commit_msg_edit = QLineEdit()
-        self.commit_msg_edit.setPlaceholderText("Änderungen beschreiben...")
+        self.commit_msg_edit.setPlaceholderText(tr("local_commit_msg_placeholder"))
         commit_layout.addWidget(self.commit_msg_edit)
 
-        self.commit_btn = QPushButton("Commit")
-        self.commit_btn.setToolTip("Fügt alle Änderungen hinzu und erstellt Commit")
+        self.commit_btn = QPushButton(tr("btn_commit"))
+        self.commit_btn.setToolTip(tr("btn_commit_tooltip"))
         self.commit_btn.clicked.connect(self.on_commit)
         self.commit_btn.setEnabled(False)
         commit_layout.addWidget(self.commit_btn)
@@ -680,33 +636,30 @@ class MainWindow(QMainWindow):
 
         # Push/Pull/Branch
         push_pull_layout = QHBoxLayout()
-        self.push_btn = QPushButton("Push zu GitHub")
-        self.push_btn.setToolTip("Pusht Commits zu GitHub")
+        self.push_btn = QPushButton(tr("btn_push"))
+        self.push_btn.setToolTip(tr("btn_push_tooltip"))
         self.push_btn.clicked.connect(self.on_push)
         self.push_btn.setEnabled(False)
         push_pull_layout.addWidget(self.push_btn)
 
-        self.pull_btn = QPushButton("Pull von GitHub")
-        self.pull_btn.setToolTip("Holt Änderungen von GitHub")
+        self.pull_btn = QPushButton(tr("btn_pull"))
+        self.pull_btn.setToolTip(tr("btn_pull_tooltip"))
         self.pull_btn.clicked.connect(self.on_pull)
         self.pull_btn.setEnabled(False)
         push_pull_layout.addWidget(self.pull_btn)
 
-        self.link_remote_btn = QPushButton("Mit GitHub verknüpfen")
-        self.link_remote_btn.setToolTip(
-            "Setzt den Remote 'origin' des geladenen lokalen Repositories auf "
-            "das oben in der Liste ausgewählte GitHub-Repository"
-        )
+        self.link_remote_btn = QPushButton(tr("btn_link_remote"))
+        self.link_remote_btn.setToolTip(tr("btn_link_remote_tooltip"))
         self.link_remote_btn.clicked.connect(self.on_link_remote)
         self.link_remote_btn.setEnabled(False)
         push_pull_layout.addWidget(self.link_remote_btn)
 
-        self.branch_label = QLabel("Branch: –")
+        self.branch_label = QLabel(tr("branch_label_empty"))
         push_pull_layout.addWidget(self.branch_label)
         push_pull_layout.addStretch()
 
         local_layout.addLayout(push_pull_layout)
-        main_layout.addWidget(local_group)
+        main_layout.addWidget(self.local_group)
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -737,20 +690,20 @@ class MainWindow(QMainWindow):
     def on_set_default_folder(self):
         if self.local_repo_path and os.path.isdir(self.local_repo_path):
             self.save_default_folder(self.local_repo_path)
-            self.status_bar.showMessage(f"Standardordner gesetzt: {self.local_repo_path}")
+            self.status_bar.showMessage(tr("status_default_folder_set", folder=self.local_repo_path))
         else:
-            QMessageBox.warning(self, "Kein Ordner", "Lade zuerst ein lokales Repository.")
+            QMessageBox.warning(self, tr("msg_no_repo_title"), tr("msg_load_local_first"))
 
     def on_change_default_folder(self):
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Standardordner auswählen",
+            tr("dlg_choose_default_folder"),
             self.default_folder or os.path.expanduser("~"),
             QFileDialog.Option.ShowDirsOnly
         )
         if folder:
             self.save_default_folder(folder)
-            self.status_bar.showMessage(f"Standardordner geändert: {folder}")
+            self.status_bar.showMessage(tr("status_default_folder_changed", folder=folder))
 
     # ------------------------------------------------------------------
     # Login / Token
@@ -767,7 +720,7 @@ class MainWindow(QMainWindow):
                     saved = datetime.datetime.fromisoformat(config['saved_at'])
                     age = datetime.datetime.now() - saved
                     days = age.days
-                    self.status_bar.showMessage(f"Token gespeichert vor {days} Tag(en)")
+                    self.status_bar.showMessage(tr("status_token_saved_days", days=days))
                 except:
                     pass
             self.check_token_btn.setEnabled(True)
@@ -778,10 +731,10 @@ class MainWindow(QMainWindow):
     def on_check_token(self):
         token = self.token_edit.text().strip()
         if not token:
-            QMessageBox.information(self, "Token prüfen", "Kein Token eingegeben.")
+            QMessageBox.information(self, tr("msg_token_check_title"), tr("msg_token_check_empty"))
             return
 
-        self.status_bar.showMessage("Prüfe Token...")
+        self.status_bar.showMessage(tr("status_checking_token"))
         self.check_token_btn.setEnabled(False)
 
         def test_token():
@@ -804,21 +757,21 @@ class MainWindow(QMainWindow):
                 age = datetime.datetime.now() - saved
                 days = age.days
                 self.status_bar.showMessage(
-                    f"Token gültig (Benutzer: {username}) – gespeichert vor {days} Tag(en)"
+                    tr("status_token_valid_days", username=username, days=days)
                 )
             except:
-                self.status_bar.showMessage(f"Token gültig (Benutzer: {username})")
+                self.status_bar.showMessage(tr("status_token_valid", username=username))
         else:
-            self.status_bar.showMessage(f"Token gültig (Benutzer: {username})")
+            self.status_bar.showMessage(tr("status_token_valid", username=username))
 
     def _on_token_invalid(self, error_msg):
         self.check_token_btn.setEnabled(True)
-        self.status_bar.showMessage("Token ist ungültig oder abgelaufen")
+        self.status_bar.showMessage(tr("status_token_invalid"))
         if "401" in error_msg or "Bad credentials" in error_msg:
             reply = QMessageBox.warning(
                 self,
-                "Token ungültig",
-                "Der Token ist ungültig. Möchtest du das Feld leeren?",
+                tr("msg_token_invalid_title"),
+                tr("msg_token_invalid_text"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes
             )
@@ -826,27 +779,23 @@ class MainWindow(QMainWindow):
                 self.token_edit.clear()
                 self.token_edit.setFocus()
         else:
-            QMessageBox.critical(self, "Fehler", f"Fehler bei der Token-Prüfung:\n{error_msg}")
+            QMessageBox.critical(self, tr("msg_error_title"), tr("msg_token_check_error", error=error_msg))
 
     def on_create_token(self):
         webbrowser.open("https://github.com/settings/tokens")
         QMessageBox.information(
             self,
-            "Token erstellen",
-            "Die GitHub-Seite wurde geöffnet.\n\n"
-            "1. Klicke auf 'Generate new token' (classic)\n"
-            "2. Wähle ein Ablaufdatum\n"
-            "3. Wähle die Berechtigung 'repo'\n"
-            "4. Token kopieren und hier einfügen"
+            tr("msg_create_token_title"),
+            tr("msg_create_token_text")
         )
 
     def on_connect(self):
         username = self.user_edit.text().strip()
         token = self.token_edit.text().strip()
         if not username or not token:
-            QMessageBox.warning(self, "Fehler", "Bitte Benutzername und Token eingeben.")
+            QMessageBox.warning(self, tr("msg_error_title"), tr("msg_username_token_required"))
             return
-        self.status_bar.showMessage("Verbinde...")
+        self.status_bar.showMessage(tr("status_connecting"))
         self.connect_btn.setEnabled(False)
 
         self.worker = GithubWorker(self._connect_to_github, username, token)
@@ -870,14 +819,14 @@ class MainWindow(QMainWindow):
         self.browse_btn.setEnabled(True)
         self.clone_btn.setEnabled(True)
         self.init_btn.setEnabled(True)
-        self.status_bar.showMessage(f"Verbunden als {self.current_user.login}")
+        self.status_bar.showMessage(tr("status_connected_as", username=self.current_user.login))
         self._populate_repo_list()
         save_config(self.user_edit.text().strip(), self.token)
 
     def _on_connect_error(self, error_msg):
         self.connect_btn.setEnabled(True)
-        self.status_bar.showMessage("Verbindung fehlgeschlagen")
-        QMessageBox.critical(self, "Verbindungsfehler", f"Fehler bei der Verbindung:\n{error_msg}")
+        self.status_bar.showMessage(tr("status_connect_failed"))
+        QMessageBox.critical(self, tr("msg_connect_error_title"), tr("msg_connect_error_text", error=error_msg))
 
     # ------------------------------------------------------------------
     # Repository-Liste
@@ -901,7 +850,7 @@ class MainWindow(QMainWindow):
     def on_refresh(self):
         if not self.github or not self.current_user:
             return
-        self.status_bar.showMessage("Lade Repositorys neu...")
+        self.status_bar.showMessage(tr("status_loading_repos"))
         self.refresh_btn.setEnabled(False)
         self.worker = GithubWorker(self._refresh_repos)
         self.worker.finished.connect(self._on_refresh_finished)
@@ -915,12 +864,12 @@ class MainWindow(QMainWindow):
         self.repos = repos
         self._populate_repo_list()
         self.refresh_btn.setEnabled(True)
-        self.status_bar.showMessage("Repositorys aktualisiert")
+        self.status_bar.showMessage(tr("status_repos_refreshed"))
 
     def _on_refresh_error(self, error_msg):
         self.refresh_btn.setEnabled(True)
-        self.status_bar.showMessage("Aktualisierung fehlgeschlagen")
-        QMessageBox.critical(self, "Fehler", f"Fehler beim Aktualisieren:\n{error_msg}")
+        self.status_bar.showMessage(tr("status_refresh_failed"))
+        QMessageBox.critical(self, tr("msg_error_title"), tr("msg_connect_error_text", error=error_msg))
 
     # ------------------------------------------------------------------
     # Neues Repository / Löschen
@@ -932,7 +881,7 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_repo_data()
             if not data["name"]:
-                QMessageBox.warning(self, "Fehler", "Der Repository-Name darf nicht leer sein.")
+                QMessageBox.warning(self, tr("msg_error_title"), tr("msg_repo_name_empty"))
                 return
             # Beschreibung bereinigen
             description = data["description"]
@@ -940,7 +889,7 @@ class MainWindow(QMainWindow):
             cleaned_description = re.sub(r'\s+', ' ', cleaned_description).strip()
             data["description"] = cleaned_description
 
-            self.status_bar.showMessage(f"Erstelle Repository '{data['name']}'...")
+            self.status_bar.showMessage(tr("status_creating_repo", name=data['name']))
             self.new_btn.setEnabled(False)
             self.worker = GithubWorker(self._create_repo, data)
             self.worker.finished.connect(self._on_create_finished)
@@ -956,13 +905,13 @@ class MainWindow(QMainWindow):
 
     def _on_create_finished(self, repo):
         self.new_btn.setEnabled(True)
-        self.status_bar.showMessage(f"Repository '{repo.name}' erstellt")
+        self.status_bar.showMessage(tr("status_repo_created", name=repo.name))
         self.on_refresh()
 
     def _on_create_error(self, error_msg):
         self.new_btn.setEnabled(True)
-        self.status_bar.showMessage("Erstellen fehlgeschlagen")
-        QMessageBox.critical(self, "Fehler", f"Fehler beim Erstellen:\n{error_msg}")
+        self.status_bar.showMessage(tr("status_create_failed"))
+        QMessageBox.critical(self, tr("msg_error_title"), tr("msg_create_error", error=error_msg))
 
     def on_delete_repo(self):
         if not self.selected_repo:
@@ -970,15 +919,15 @@ class MainWindow(QMainWindow):
         repo_name = self.selected_repo.name
         reply = QMessageBox.question(
             self,
-            "Repository löschen",
-            f"Soll das Repository '{repo_name}' wirklich gelöscht werden?",
+            tr("msg_delete_confirm_title"),
+            tr("msg_delete_confirm_text", name=repo_name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        self.status_bar.showMessage(f"Lösche Repository '{repo_name}'...")
+        self.status_bar.showMessage(tr("status_deleting_repo", name=repo_name))
         self.delete_btn.setEnabled(False)
         self.worker = GithubWorker(self._delete_repo, self.selected_repo)
         self.worker.finished.connect(self._on_delete_finished)
@@ -990,14 +939,14 @@ class MainWindow(QMainWindow):
 
     def _on_delete_finished(self, _):
         self.delete_btn.setEnabled(True)
-        self.status_bar.showMessage("Repository gelöscht")
+        self.status_bar.showMessage(tr("status_repo_deleted"))
         self.selected_repo = None
         self.on_refresh()
 
     def _on_delete_error(self, error_msg):
         self.delete_btn.setEnabled(True)
-        self.status_bar.showMessage("Löschen fehlgeschlagen")
-        QMessageBox.critical(self, "Fehler", f"Fehler beim Löschen:\n{error_msg}")
+        self.status_bar.showMessage(tr("status_delete_failed"))
+        QMessageBox.critical(self, tr("msg_error_title"), tr("msg_delete_error", error=error_msg))
 
     # ------------------------------------------------------------------
     # Lokales Repository
@@ -1006,7 +955,7 @@ class MainWindow(QMainWindow):
         try:
             repo = Repo(folder)
             branch = repo.active_branch.name
-            self.branch_label.setText(f"Branch: {branch}")
+            self.branch_label.setText(tr("branch_label", branch=branch))
             self.local_repo_path = folder
             self.repo_obj = repo
             self.path_edit.setText(folder)
@@ -1019,48 +968,39 @@ class MainWindow(QMainWindow):
                 self.push_btn.setEnabled(False)
                 self.pull_btn.setEnabled(False)
                 self.link_remote_btn.setEnabled(True)
-                self.status_bar.showMessage(
-                    f"Lokales Repository geladen: {folder} – kein Remote konfiguriert. "
-                    "Wähle oben ein GitHub-Repository aus und klicke auf "
-                    "'Mit GitHub verknüpfen'."
-                )
+                self.status_bar.showMessage(tr("status_local_repo_loaded_no_remote", folder=folder))
                 QMessageBox.information(
                     self,
-                    "Kein Remote konfiguriert",
-                    f"'{folder}' wurde geladen, ist aber noch nicht mit einem "
-                    "GitHub-Repository verknüpft (kein 'origin' Remote).\n\n"
-                    "Wähle oben in der Liste 'Repositorys' das passende GitHub-"
-                    "Repository aus und klicke dann auf 'Mit GitHub verknüpfen', "
-                    "um Push/Pull zu aktivieren."
+                    tr("msg_no_remote_title"),
+                    tr("msg_no_remote_text", folder=folder)
                 )
             else:
                 self.push_btn.setEnabled(True)
                 self.pull_btn.setEnabled(True)
                 self.link_remote_btn.setEnabled(True)
-                self.status_bar.showMessage(f"Lokales Repository geladen: {folder}")
+                self.status_bar.showMessage(tr("status_local_repo_loaded", folder=folder))
             return True
         except InvalidGitRepositoryError:
-            QMessageBox.critical(self, "Kein Git-Repository", f"'{folder}' ist kein Git-Repository.")
+            QMessageBox.critical(self, tr("msg_no_git_repo_title"), tr("msg_no_git_repo_text", folder=folder))
         except Exception as e:
-            QMessageBox.critical(self, "Fehler", f"Fehler beim Laden:\n{e}")
+            QMessageBox.critical(self, tr("msg_error_title"), tr("msg_load_error", error=e))
         return False
 
     def on_link_remote(self):
         """Verknüpft das geladene lokale Repository mit dem ausgewählten
         GitHub-Repository, indem der Remote 'origin' gesetzt bzw. überschrieben wird."""
         if not self.repo_obj:
-            QMessageBox.warning(self, "Kein Repository", "Lade zuerst ein lokales Repository.")
+            QMessageBox.warning(self, tr("msg_no_repo_title"), tr("msg_load_local_first"))
             return
         if not self.selected_repo:
             QMessageBox.warning(
                 self,
-                "Kein GitHub-Repository ausgewählt",
-                "Wähle zuerst oben in der Liste 'Repositorys' das GitHub-"
-                "Repository aus, mit dem verknüpft werden soll."
+                tr("msg_no_github_repo_title"),
+                tr("msg_no_github_repo_text_link")
             )
             return
         if not self.token or not self.current_user:
-            QMessageBox.warning(self, "Fehler", "Bitte verbinde dich zuerst.")
+            QMessageBox.warning(self, tr("msg_error_title"), tr("msg_connect_first"))
             return
 
         try:
@@ -1078,25 +1018,21 @@ class MainWindow(QMainWindow):
             self.push_btn.setEnabled(True)
             self.pull_btn.setEnabled(True)
             self.status_bar.showMessage(
-                f"Mit GitHub-Repository '{self.selected_repo.full_name}' verknüpft"
+                tr("status_linked_to_repo", full_name=self.selected_repo.full_name)
             )
             QMessageBox.information(
                 self,
-                "Verknüpft",
-                f"Das lokale Repository ist nun mit "
-                f"'{self.selected_repo.full_name}' verknüpft.\n\n"
-                "Falls das GitHub-Repository bereits Inhalte hat und das lokale "
-                "Repository noch keine gemeinsame Historie hat, zuerst "
-                "'Pull von GitHub' ausführen, bevor gepusht wird."
+                tr("msg_linked_title"),
+                tr("msg_linked_text", full_name=self.selected_repo.full_name)
             )
         except Exception as e:
-            QMessageBox.critical(self, "Fehler", f"Fehler beim Verknüpfen:\n{e}")
+            QMessageBox.critical(self, tr("msg_error_title"), tr("msg_link_error", error=e))
 
     def on_browse_folder(self):
         start_dir = self.default_folder if self.default_folder else os.path.expanduser("~")
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Lokales Git-Repository auswählen",
+            tr("dlg_choose_local_repo_folder"),
             start_dir,
             QFileDialog.Option.ShowDirsOnly
         )
@@ -1105,13 +1041,13 @@ class MainWindow(QMainWindow):
 
     def on_clone_repo(self):
         if not self.selected_repo:
-            QMessageBox.warning(self, "Kein Repository", "Wähle zuerst ein Repository aus.")
+            QMessageBox.warning(self, tr("msg_no_repo_title"), tr("msg_load_local_first"))
             return
         if not self.default_folder:
-            QMessageBox.warning(self, "Kein Standardordner", "Setze zuerst einen Standardordner.")
+            QMessageBox.warning(self, tr("msg_no_default_folder_title"), tr("msg_no_default_folder_text"))
             return
         if not self.token or not self.current_user:
-            QMessageBox.warning(self, "Fehler", "Bitte verbinde dich zuerst.")
+            QMessageBox.warning(self, tr("msg_error_title"), tr("msg_connect_first"))
             return
 
         repo_name = self.selected_repo.name
@@ -1120,15 +1056,15 @@ class MainWindow(QMainWindow):
         if os.path.exists(target_dir):
             reply = QMessageBox.question(
                 self,
-                "Ordner existiert",
-                f"Der Ordner '{target_dir}' existiert. Überschreiben?",
+                tr("msg_folder_exists_title"),
+                tr("msg_folder_exists_text", folder=target_dir),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        self.status_bar.showMessage(f"Klone {repo_name}...")
+        self.status_bar.showMessage(tr("status_cloning", name=repo_name))
         self.clone_btn.setEnabled(False)
 
         def do_clone():
@@ -1146,20 +1082,20 @@ class MainWindow(QMainWindow):
 
     def _on_clone_finished(self, repo):
         self.clone_btn.setEnabled(True)
-        self.status_bar.showMessage(f"Repository geklont: {repo.working_dir}")
+        self.status_bar.showMessage(tr("status_cloned", path=repo.working_dir))
         self._load_repo(repo.working_dir)
 
     def _on_clone_error(self, error_msg):
         self.clone_btn.setEnabled(True)
-        self.status_bar.showMessage("Klonen fehlgeschlagen")
-        QMessageBox.critical(self, "Fehler", f"Fehler beim Klonen:\n{error_msg}")
+        self.status_bar.showMessage(tr("status_clone_failed"))
+        QMessageBox.critical(self, tr("msg_error_title"), tr("msg_clone_error", error=error_msg))
 
     def on_init_repo(self):
         if not self.default_folder:
-            QMessageBox.warning(self, "Kein Standardordner", "Setze zuerst einen Standardordner.")
+            QMessageBox.warning(self, tr("msg_no_default_folder_title"), tr("msg_no_default_folder_text"))
             return
         if not self.token or not self.current_user:
-            QMessageBox.warning(self, "Fehler", "Bitte verbinde dich zuerst.")
+            QMessageBox.warning(self, tr("msg_error_title"), tr("msg_connect_first"))
             return
         if not self.selected_repo:
             # Das ist die Ursache von "Kein Remote konfiguriert": ein frisch mit
@@ -1168,12 +1104,8 @@ class MainWindow(QMainWindow):
             # Remote sie setzen soll.
             QMessageBox.warning(
                 self,
-                "Kein GitHub-Repository ausgewählt",
-                "Wähle zuerst oben in der Liste 'Repositorys' das GitHub-"
-                "Repository aus, mit dem das neue lokale Repository verknüpft "
-                "werden soll.\n\n"
-                "Falls es noch nicht existiert, lege es zuerst über "
-                "'Neues Repository' an."
+                tr("msg_no_github_repo_title"),
+                tr("msg_no_github_repo_text_init")
             )
             return
 
@@ -1184,13 +1116,8 @@ class MainWindow(QMainWindow):
         if getattr(self.selected_repo, "size", 0) and self.selected_repo.size > 0:
             reply = QMessageBox.question(
                 self,
-                "Repository ist nicht leer",
-                f"'{self.selected_repo.name}' enthält auf GitHub bereits Dateien.\n"
-                "Ein neues lokales Repository per 'git init' hat eine eigene, "
-                "unabhängige Historie – der erste Push würde fehlschlagen oder "
-                "einen Force-Push erfordern.\n\n"
-                "Empfehlung: Stattdessen 'Repository klonen' verwenden.\n\n"
-                "Trotzdem fortfahren?",
+                tr("msg_repo_not_empty_title"),
+                tr("msg_repo_not_empty_text", name=self.selected_repo.name),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No
             )
@@ -1199,8 +1126,8 @@ class MainWindow(QMainWindow):
 
         name, ok = QInputDialog.getText(
             self,
-            "Neues Repository",
-            "Name des neuen lokalen Ordners:",
+            tr("msg_new_repo_dialog_title"),
+            tr("msg_new_repo_dialog_label"),
             text=self.selected_repo.name
         )
         if not ok or not name.strip():
@@ -1209,7 +1136,7 @@ class MainWindow(QMainWindow):
         target_dir = os.path.join(self.default_folder, name)
 
         if os.path.exists(target_dir):
-            QMessageBox.warning(self, "Existiert", f"Der Ordner '{target_dir}' existiert bereits.")
+            QMessageBox.warning(self, tr("msg_exists_title"), tr("msg_exists_text", folder=target_dir))
             return
 
         try:
@@ -1225,26 +1152,25 @@ class MainWindow(QMainWindow):
             repo.create_remote("origin", auth_url)
 
             self.status_bar.showMessage(
-                f"Neues Repository initialisiert und mit "
-                f"'{self.selected_repo.full_name}' verknüpft: {target_dir}"
+                tr("status_init_done", full_name=self.selected_repo.full_name, path=target_dir)
             )
             self._load_repo(target_dir)
         except Exception as e:
-            QMessageBox.critical(self, "Fehler", f"Fehler beim Initialisieren:\n{e}")
+            QMessageBox.critical(self, tr("msg_error_title"), tr("msg_init_error", error=e))
 
     # ------------------------------------------------------------------
     # Commit / Push / Pull
     # ------------------------------------------------------------------
     def on_commit(self):
         if not self.repo_obj:
-            QMessageBox.warning(self, "Fehler", "Kein lokales Repository ausgewählt.")
+            QMessageBox.warning(self, tr("msg_error_title"), tr("msg_no_local_repo"))
             return
         msg = self.commit_msg_edit.text().strip()
         if not msg:
-            QMessageBox.warning(self, "Fehler", "Bitte eine Commit-Nachricht eingeben.")
+            QMessageBox.warning(self, tr("msg_error_title"), tr("msg_commit_msg_required"))
             return
 
-        self.status_bar.showMessage("Commit wird ausgeführt...")
+        self.status_bar.showMessage(tr("status_commit_in_progress"))
         self.commit_btn.setEnabled(False)
 
         def do_commit():
@@ -1260,11 +1186,7 @@ class MainWindow(QMainWindow):
                 if line and line[0] != ' ' and line[0] != '?'
             ]
             if not staged_lines:
-                raise RuntimeError(
-                    "Keine Änderungen zum Committen gefunden.\n"
-                    "Prüfe, ob im richtigen Ordner gearbeitet wurde und ob die "
-                    "geänderten Dateien nicht durch .gitignore ausgeschlossen sind."
-                )
+                raise RuntimeError(tr("err_no_changes_to_commit"))
             commit = self.repo_obj.index.commit(msg)
             return commit
 
@@ -1275,22 +1197,22 @@ class MainWindow(QMainWindow):
 
     def _on_commit_finished(self, commit):
         self.commit_btn.setEnabled(True)
-        self.status_bar.showMessage(f"Commit erfolgreich: {commit.hexsha[:7]}")
+        self.status_bar.showMessage(tr("status_commit_success", hash=commit.hexsha[:7]))
         self.commit_msg_edit.clear()
         if self.repo_obj:
-            self.branch_label.setText(f"Branch: {self.repo_obj.active_branch.name}")
+            self.branch_label.setText(tr("branch_label", branch=self.repo_obj.active_branch.name))
 
     def _on_commit_error(self, error_msg):
         self.commit_btn.setEnabled(True)
-        self.status_bar.showMessage("Commit fehlgeschlagen")
-        QMessageBox.critical(self, "Fehler", f"Fehler beim Commit:\n{error_msg}")
+        self.status_bar.showMessage(tr("status_commit_failed"))
+        QMessageBox.critical(self, tr("msg_error_title"), tr("msg_commit_error", error=error_msg))
 
     def on_push(self):
         if not self.repo_obj:
-            QMessageBox.warning(self, "Fehler", "Kein lokales Repository ausgewählt.")
+            QMessageBox.warning(self, tr("msg_error_title"), tr("msg_no_local_repo"))
             return
         if not self.token or not self.current_user:
-            QMessageBox.warning(self, "Fehler", "Kein Token oder Benutzer. Bitte verbinde dich erneut.")
+            QMessageBox.warning(self, tr("msg_error_title"), tr("msg_no_token_user"))
             return
 
         local_branch = self.repo_obj.active_branch.name
@@ -1310,19 +1232,17 @@ class MainWindow(QMainWindow):
         if default_branch and local_branch != default_branch:
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Icon.Question)
-            box.setWindowTitle("Branch-Abweichung")
+            box.setWindowTitle(tr("msg_branch_mismatch_title"))
             box.setText(
-                f"Der lokale Branch heißt '{local_branch}', der Standard-Branch "
-                f"dieses Repositories auf GitHub ist aber '{default_branch}'.\n\n"
-                "Wohin soll gepusht werden?"
+                tr("msg_branch_mismatch_text", local=local_branch, default=default_branch)
             )
             btn_default = box.addButton(
-                f"Auf '{default_branch}' pushen (empfohlen)", QMessageBox.ButtonRole.AcceptRole
+                tr("btn_push_to_default", branch=default_branch), QMessageBox.ButtonRole.AcceptRole
             )
             btn_same = box.addButton(
-                f"Auf '{local_branch}' pushen", QMessageBox.ButtonRole.ActionRole
+                tr("btn_push_to_local", branch=local_branch), QMessageBox.ButtonRole.ActionRole
             )
-            box.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
+            box.addButton(tr("btn_cancel"), QMessageBox.ButtonRole.RejectRole)
             box.setDefaultButton(btn_default)
             box.exec()
             clicked = box.clickedButton()
@@ -1331,10 +1251,10 @@ class MainWindow(QMainWindow):
             elif clicked == btn_same:
                 target_branch = local_branch
             else:
-                self.status_bar.showMessage("Push abgebrochen")
+                self.status_bar.showMessage(tr("status_push_cancelled"))
                 return
 
-        self.status_bar.showMessage("Push wird ausgeführt...")
+        self.status_bar.showMessage(tr("status_pushing"))
         self.push_btn.setEnabled(False)
 
         def do_push():
@@ -1357,11 +1277,7 @@ class MainWindow(QMainWindow):
             # etwas übertragen wurde. Deshalb müssen die zurückgegebenen
             # PushInfo-Objekte explizit auf Fehler-Flags geprüft werden.
             if not push_infos:
-                raise RuntimeError(
-                    "GitHub hat keine Rückmeldung zum Push gesendet. "
-                    "Es kann nicht bestätigt werden, dass die Änderungen "
-                    "übertragen wurden."
-                )
+                raise RuntimeError(tr("err_push_no_feedback"))
 
             error_flags = (
                 git.PushInfo.ERROR
@@ -1379,10 +1295,7 @@ class MainWindow(QMainWindow):
 
             if error_summaries:
                 raise RuntimeError(
-                    "GitHub hat den Push abgelehnt:\n" + "\n".join(error_summaries) +
-                    "\n\nMögliche Ursache: Der Remote-Branch enthält Commits, die "
-                    "lokal nicht vorhanden sind (z.B. Änderungen über die GitHub-"
-                    "Weboberfläche). Erst 'Pull von GitHub' ausführen, dann erneut pushen."
+                    tr("err_push_rejected", summaries="\n".join(error_summaries))
                 )
 
             return {
@@ -1403,48 +1316,45 @@ class MainWindow(QMainWindow):
 
         if result.get("up_to_date"):
             self.status_bar.showMessage(
-                f"Push: Branch '{remote_branch}' war bereits aktuell – keine neuen Commits"
+                tr("status_push_up_to_date", branch=remote_branch)
             )
             QMessageBox.information(
                 self,
-                "Bereits aktuell",
-                f"Es gab keine neuen Commits, die nach '{remote_branch}' übertragen "
-                "werden konnten.\n\nWurden die Änderungen vorher committet?"
+                tr("msg_up_to_date_title"),
+                tr("msg_up_to_date_text", branch=remote_branch)
             )
         elif local_branch != remote_branch:
             self.status_bar.showMessage(
-                f"Push erfolgreich: '{local_branch}' → GitHub-Branch '{remote_branch}'"
+                tr("status_push_success_renamed", local=local_branch, remote=remote_branch)
             )
         else:
-            self.status_bar.showMessage(f"Push erfolgreich (Branch: {remote_branch})")
+            self.status_bar.showMessage(tr("status_push_success", branch=remote_branch))
 
     def _on_push_error(self, error_msg):
         self.push_btn.setEnabled(True)
-        self.status_bar.showMessage("Push fehlgeschlagen")
+        self.status_bar.showMessage(tr("status_push_failed"))
         if "non-fast-forward" in error_msg or "rejected" in error_msg.lower():
             reply = QMessageBox.critical(
                 self,
-                "Fehler",
-                f"Fehler beim Push:\n{error_msg}\n\n"
-                "Möchtest du jetzt einen Pull ausführen, um die Remote-Änderungen "
-                "zuerst zu holen und danach erneut zu pushen?",
+                tr("msg_error_title"),
+                tr("msg_push_error_pull_question", error=error_msg),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes
             )
             if reply == QMessageBox.StandardButton.Yes:
                 self.on_pull()
         else:
-            QMessageBox.critical(self, "Fehler", f"Fehler beim Push:\n{error_msg}")
+            QMessageBox.critical(self, tr("msg_error_title"), tr("msg_push_error", error=error_msg))
 
     def on_pull(self):
         if not self.repo_obj:
-            QMessageBox.warning(self, "Fehler", "Kein lokales Repository ausgewählt.")
+            QMessageBox.warning(self, tr("msg_error_title"), tr("msg_no_local_repo"))
             return
         if not self.token or not self.current_user:
-            QMessageBox.warning(self, "Fehler", "Kein Token oder Benutzer. Bitte verbinde dich erneut.")
+            QMessageBox.warning(self, tr("msg_error_title"), tr("msg_no_token_user"))
             return
 
-        self.status_bar.showMessage("Pull wird ausgeführt...")
+        self.status_bar.showMessage(tr("status_pulling"))
         self.pull_btn.setEnabled(False)
 
         def do_pull():
@@ -1487,21 +1397,10 @@ class MainWindow(QMainWindow):
                         )
                     except GitCommandError as e2:
                         if "conflict" in str(e2).lower():
-                            raise RuntimeError(
-                                "Merge-Konflikt beim Zusammenführen der bisher "
-                                "unabhängigen Historien: dieselben Dateien wurden "
-                                "lokal und auf GitHub unterschiedlich geändert.\n\n"
-                                "Bitte im Terminal im Projektordner mit 'git status' "
-                                "prüfen, Konflikte manuell lösen und anschließend "
-                                "committen."
-                            )
-                        raise RuntimeError(f"Pull fehlgeschlagen:\n{e2}")
+                            raise RuntimeError(tr("err_merge_conflict_unrelated"))
+                        raise RuntimeError(tr("err_pull_failed", error=e2))
                 elif "conflict" in msg.lower():
-                    raise RuntimeError(
-                        "Merge-Konflikt beim Pull. Bitte im Terminal im "
-                        "Projektordner mit 'git status' prüfen, Konflikte "
-                        "manuell lösen und anschließend committen."
-                    )
+                    raise RuntimeError(tr("err_merge_conflict"))
                 else:
                     raise
 
@@ -1514,14 +1413,14 @@ class MainWindow(QMainWindow):
 
     def _on_pull_finished(self, remote_branch):
         self.pull_btn.setEnabled(True)
-        self.status_bar.showMessage(f"Pull erfolgreich von '{remote_branch}'")
+        self.status_bar.showMessage(tr("status_pull_success", branch=remote_branch))
         if self.repo_obj:
-            self.branch_label.setText(f"Branch: {self.repo_obj.active_branch.name}")
+            self.branch_label.setText(tr("branch_label", branch=self.repo_obj.active_branch.name))
 
     def _on_pull_error(self, error_msg):
         self.pull_btn.setEnabled(True)
-        self.status_bar.showMessage("Pull fehlgeschlagen")
-        QMessageBox.critical(self, "Fehler", f"Fehler beim Pull:\n{error_msg}")
+        self.status_bar.showMessage(tr("status_pull_failed"))
+        QMessageBox.critical(self, tr("msg_error_title"), tr("msg_pull_error", error=error_msg))
 
 
 # ----------------------------------------------------------------------
