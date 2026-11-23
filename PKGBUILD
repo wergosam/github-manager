@@ -1,6 +1,6 @@
 # Maintainer: Jürg Rechsteiner <wergosam@gmail.com>
 pkgname=github-manager
-pkgver=1.0.9
+pkgver=1.0.10
 pkgrel=1
 pkgdesc="PyQt6-Desktop-Tool zur Verwaltung von GitHub- und lokalen Git-Repositories ohne Terminal"
 arch=('any')

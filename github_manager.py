@@ -2165,6 +2165,11 @@ class MainWindow(QMainWindow):
         self.aur_repo_obj = None
         self.aur_default_folder = None
         self.aur_worker = None
+        # Alle gestarteten QThreads bis zum Ende des Fensters stark referenzieren.
+        # Ein Worker emittiert sein Ergebnissignal noch innerhalb von run(); der
+        # Slot kann sofort den naechsten Worker starten. Ein einzelnes Attribut
+        # (self.worker/self.aur_worker) reicht dann nicht als Lebenszeitschutz.
+        self._workers = []
         self._aur_last_state = None  # letztes Ergebnis von _analyze_aur_state()
         # True, sobald in diesem Durchlauf (seit dem Laden des Ordners bzw.
         # seit dem letzten erfolgreichen AUR-Push) "Version aktualisieren"
@@ -2959,6 +2964,7 @@ class MainWindow(QMainWindow):
             return user.login
 
         self.worker = GithubWorker(test_token)
+        self._workers.append(self.worker)
         self.worker.finished.connect(self._on_token_valid)
         self.worker.error.connect(self._on_token_invalid)
         self.worker.start()
@@ -3012,6 +3018,7 @@ class MainWindow(QMainWindow):
         self.connect_btn.setEnabled(False)
 
         self.worker = GithubWorker(self._connect_to_github, username, token)
+        self._workers.append(self.worker)
         self.worker.finished.connect(self._on_connect_finished)
         self.worker.error.connect(self._on_connect_error)
         self.worker.start()
@@ -3130,6 +3137,7 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(tr("status_loading_repos"))
         self.refresh_btn.setEnabled(False)
         self.worker = GithubWorker(self._refresh_repos)
+        self._workers.append(self.worker)
         self.worker.finished.connect(self._on_refresh_finished)
         self.worker.error.connect(self._on_refresh_error)
         self.worker.start()
@@ -3169,6 +3177,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(tr("status_creating_repo", name=data['name']))
             self.new_btn.setEnabled(False)
             self.worker = GithubWorker(self._create_repo, data)
+            self._workers.append(self.worker)
             self.worker.finished.connect(self._on_create_finished)
             self.worker.error.connect(self._on_create_error)
             self.worker.start()
@@ -3215,6 +3224,7 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(tr("status_deleting_repo", name=repo_name))
         self.delete_btn.setEnabled(False)
         self.worker = GithubWorker(self._delete_repo, self.selected_repo)
+        self._workers.append(self.worker)
         self.worker.finished.connect(self._on_delete_finished)
         self.worker.error.connect(self._on_delete_error)
         self.worker.start()
@@ -3273,6 +3283,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(tr("status_checking_repo_state"))
             self.release_btn.setEnabled(False)
             self.worker = GithubWorker(self._analyze_repo_state)
+            self._workers.append(self.worker)
             self.worker.finished.connect(self._on_release_precheck_finished)
             self.worker.error.connect(self._on_release_precheck_error)
             self.worker.start()
@@ -3351,6 +3362,7 @@ class MainWindow(QMainWindow):
             data["draft"],
             data["target_branch"],
         )
+        self._workers.append(self.worker)
         self.worker.finished.connect(self._on_release_finished)
         self.worker.error.connect(self._on_release_error)
         self.worker.start()
@@ -3514,6 +3526,7 @@ class MainWindow(QMainWindow):
             return repo
 
         self.worker = GithubWorker(do_clone)
+        self._workers.append(self.worker)
         self.worker.finished.connect(self._on_clone_finished)
         self.worker.error.connect(self._on_clone_error)
         self.worker.start()
@@ -3769,6 +3782,7 @@ class MainWindow(QMainWindow):
         self.suggested_action_btn.setEnabled(False)
 
         self.worker = GithubWorker(self._analyze_repo_state)
+        self._workers.append(self.worker)
         self.worker.finished.connect(self._on_check_status_finished)
         self.worker.error.connect(self._on_check_status_error)
         self.worker.start()
@@ -3904,6 +3918,7 @@ class MainWindow(QMainWindow):
             return commit
 
         self.worker = GithubWorker(do_commit)
+        self._workers.append(self.worker)
         self.worker.finished.connect(self._on_commit_finished)
         self.worker.error.connect(self._on_commit_error)
         self.worker.start()
@@ -4062,6 +4077,7 @@ class MainWindow(QMainWindow):
             }
 
         self.worker = GithubWorker(do_push)
+        self._workers.append(self.worker)
         self.worker.finished.connect(self._on_push_finished)
         self.worker.error.connect(self._on_push_error)
         self.worker.start()
@@ -4199,6 +4215,7 @@ class MainWindow(QMainWindow):
             return remote_branch
 
         self.worker = GithubWorker(do_pull)
+        self._workers.append(self.worker)
         self.worker.finished.connect(self._on_pull_finished)
         self.worker.error.connect(self._on_pull_error)
         self.worker.start()
@@ -4407,6 +4424,7 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(tr("status_aur_creating_package", pkgname=data["pkgname"]))
         self.aur_new_package_btn.setEnabled(False)
         self.aur_worker = GithubWorker(self._create_new_aur_package, data)
+        self._workers.append(self.aur_worker)
         self.aur_worker.finished.connect(self._on_new_aur_package_finished)
         self.aur_worker.error.connect(self._on_new_aur_package_error)
         self.aur_worker.start()
@@ -4522,6 +4540,7 @@ class MainWindow(QMainWindow):
             }
 
         self.aur_worker = GithubWorker(do_update)
+        self._workers.append(self.aur_worker)
         self.aur_worker.finished.connect(self._on_aur_update_finished)
         self.aur_worker.error.connect(self._on_aur_update_error)
         self.aur_worker.start()
@@ -4600,6 +4619,7 @@ class MainWindow(QMainWindow):
             return True
 
         self.aur_worker = GithubWorker(do_commit_push)
+        self._workers.append(self.aur_worker)
         self.aur_worker.finished.connect(self._on_aur_push_finished)
         self.aur_worker.error.connect(self._on_aur_push_error)
         self.aur_worker.start()
@@ -4725,6 +4745,7 @@ class MainWindow(QMainWindow):
         self.aur_suggested_action_btn.setEnabled(False)
 
         self.aur_worker = GithubWorker(self._analyze_aur_state)
+        self._workers.append(self.aur_worker)
         self.aur_worker.finished.connect(self._on_aur_check_status_finished)
         self.aur_worker.error.connect(self._on_aur_check_status_error)
         self.aur_worker.start()
@@ -4897,6 +4918,7 @@ class MainWindow(QMainWindow):
             return True
 
         self.aur_worker = GithubWorker(do_push)
+        self._workers.append(self.aur_worker)
         self.aur_worker.finished.connect(self._on_aur_push_finished)
         self.aur_worker.error.connect(self._on_aur_push_error)
         self.aur_worker.start()
@@ -4921,6 +4943,7 @@ class MainWindow(QMainWindow):
             return True
 
         self.aur_worker = GithubWorker(do_pull)
+        self._workers.append(self.aur_worker)
         self.aur_worker.finished.connect(self._on_aur_pull_finished)
         self.aur_worker.error.connect(self._on_aur_pull_error)
         self.aur_worker.start()

@@ -332,7 +332,7 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
         # ---- Dialog: Über ----
         "dlg_about_title": "Über GitHub Repository Manager",
         "about_app_title": "GitHub Repository Manager",
-        "about_version": "Version 1.0.9",
+        "about_version": "Version 1.0.10",
         "about_author_block": (
             "<b>Autor:</b> Jürg Rechsteiner<br>"
             "<b>Website:</b> <a href='https://www.computer-experte.ch'>computer-experte.ch</a><br>"
