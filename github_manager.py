@@ -141,9 +141,9 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem,
     QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QTextEdit,
     QCheckBox, QStatusBar, QGroupBox, QFileDialog, QInputDialog,
-    QScrollArea, QTabWidget, QStackedWidget, QComboBox
+    QScrollArea, QTabWidget, QStackedWidget, QComboBox, QStyle
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QEvent, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup
 from github import Github, Auth
 from github.Repository import Repository
@@ -531,6 +531,56 @@ class GithubWorker(QThread):
             self.error.emit(f"{e}\n\n{traceback.format_exc()}")
 
 
+# ----------------------------------------------------------------------
+# Hilfsfunktionen für die Einrichtungsphase des Update-Assistenten
+# ----------------------------------------------------------------------
+def git_origin_url(folder):
+    """Liest die URL des Remotes 'origin' direkt aus .git/config (ohne
+    GitPython - schnell genug, um viele Ordner zu durchsuchen). Gibt None
+    zurück, wenn der Ordner kein Git-Repo ist oder keinen origin hat."""
+    cfg = os.path.join(folder, ".git", "config")
+    try:
+        with open(cfg, "r", encoding="utf-8", errors="ignore") as f:
+            text = f.read()
+    except OSError:
+        return None
+    m = re.search(r'\[remote "origin"\][^\[]*?url\s*=\s*(\S+)', text)
+    return m.group(1) if m else None
+
+
+def url_matches_repo(url, full_name):
+    """True, wenn die Remote-URL zum GitHub-Repo 'user/name' gehört
+    (gleiche Logik wie MainWindow._local_repo_matches_selected)."""
+    if not url or not full_name:
+        return False
+    if "@" in url and "://" in url:
+        base = "https://" + url.split("@")[-1]
+    else:
+        base = url
+    base = base.rstrip("/")
+    if base.lower().endswith(".git"):
+        base = base[:-4]
+    return base.lower().endswith(full_name.lower())
+
+
+def list_subfolders(base, limit=300):
+    """Unterordner (eine Ebene, ohne versteckte) - begrenzt, damit ein
+    riesiger Standardordner den Assistenten nicht ausbremst."""
+    result = []
+    try:
+        for name in sorted(os.listdir(base)):
+            if name.startswith("."):
+                continue
+            path = os.path.join(base, name)
+            if os.path.isdir(path):
+                result.append(path)
+                if len(result) >= limit:
+                    break
+    except OSError:
+        pass
+    return result
+
+
 class UpdateAssistantDialog(QDialog):
     """Geführter Assistent für den kompletten Update-Ablauf.
 
@@ -547,10 +597,20 @@ class UpdateAssistantDialog(QDialog):
     'worker'/'aur_worker' währenddessen nicht durch andere Klicks
     überschrieben werden können."""
 
-    def __init__(self, main_window):
+    def __init__(self, main_window, aur_only=False, github_only=False):
         super().__init__(main_window)
         self.main_window = main_window
-        self.setWindowTitle(tr("wizard_title"))
+        # aur_only: nur das AUR-Paket nachziehen (GitHub ist schon aktuell):
+        # keine Verbindungs-/Repo-/Ordner-Einrichtung, kein Commit/Push/Release.
+        self.aur_only = aur_only
+        # github_only: nur GitHub (Commit, Push, optional Release), ohne AUR-Teil.
+        self.github_only = github_only
+        if aur_only:
+            self.setWindowTitle(tr("wizard_aur_only_title"))
+        elif github_only:
+            self.setWindowTitle(tr("wizard_github_only_title"))
+        else:
+            self.setWindowTitle(tr("wizard_title"))
         self.setModal(True)
         self.resize(560, 480)
 
@@ -558,6 +618,21 @@ class UpdateAssistantDialog(QDialog):
         self._pos = -1        # Index in self._order, -1 = Intro-Seite
         self._done = set()    # bereits erfolgreich abgeschlossene Schritt-Keys
         self.new_version = ""  # von der Intro-Seite gewählte neue Version
+
+        # Einrichtungsphase (vor dem eigentlichen Ablauf): Verbindung ->
+        # Repository -> lokaler Ordner -> AUR-Ordner. Fehlt etwas, bietet
+        # jede Seite eine Auswahl bzw. einen Lösungsvorschlag an.
+        self._phase = "setup"
+        if aur_only:
+            self._setup_order = ["aur"]
+        elif github_only:
+            self._setup_order = ["connect", "repo", "folder"]
+        else:
+            self._setup_order = ["connect", "repo", "folder", "aur"]
+        self._setup_pos = 0
+        self._skip_aur = False
+        self._intro_gen = 0
+        self._workers = []  # Referenzen auf Worker, damit kein QThread zu früh zerstört wird
 
         outer = QVBoxLayout(self)
 
@@ -570,19 +645,22 @@ class UpdateAssistantDialog(QDialog):
 
         nav_layout = QHBoxLayout()
         self.back_btn = QPushButton(tr("wizard_btn_back"))
-        self.back_btn.clicked.connect(self._go_back)
+        self.back_btn.clicked.connect(self._dispatch_back)
         nav_layout.addWidget(self.back_btn)
         nav_layout.addStretch(1)
         self.close_btn = QPushButton(tr("wizard_btn_close"))
         self.close_btn.clicked.connect(self.reject)
         nav_layout.addWidget(self.close_btn)
         self.next_btn = QPushButton(tr("wizard_btn_next"))
-        self.next_btn.clicked.connect(self._go_next)
+        self.next_btn.clicked.connect(self._dispatch_next)
         nav_layout.addWidget(self.next_btn)
         outer.addLayout(nav_layout)
 
-        self.page_index = {}  # Schritt-Key -> Index im QStackedWidget
-        self._build_intro_page()
+        self.page_index = {}  # Schritt-Key -> Seiten-Widget im QStackedWidget
+        self._build_setup_connect_page()
+        self._build_setup_repo_page()
+        self._build_setup_folder_page()
+        self._build_setup_aur_page()
         self._build_commit_page()
         self._build_push_page()
         self._build_release_page()
@@ -590,15 +668,30 @@ class UpdateAssistantDialog(QDialog):
         self._build_aur_commit_push_page()
         self._build_summary_page()
 
-        self._show_intro()
+        # Die Intro-Seite wird erst nach der Einrichtung gebaut (sie hängt
+        # davon ab, was geladen wurde) - siehe _finish_setup().
+        if github_only:
+            # "Nur AUR"-Abkürzung ergibt im reinen GitHub-Modus keinen Sinn
+            self.sc_skip_btn.setVisible(False)
+            self.sr_skip_btn.setVisible(False)
+        self._apply_tooltips()
+        self._enter_setup(0)
 
     # ------------------------------------------------------------------
     # Hilfsfunktionen
     # ------------------------------------------------------------------
     def _add_page(self, key, widget):
-        idx = self.stack.addWidget(widget)
-        self.page_index[key] = idx
-        return idx
+        """Fügt eine Seite hinzu. Existiert der Key schon (Intro-Seite wird
+        nach der Einrichtung neu gebaut), wird die alte Seite ersetzt. Es
+        werden Widgets statt Indizes gespeichert, weil sich Indizes beim
+        Entfernen einer Seite verschieben würden."""
+        old = self.page_index.get(key)
+        if old is not None:
+            self.stack.removeWidget(old)
+            old.deleteLater()
+        self.stack.addWidget(widget)
+        self.page_index[key] = widget
+        return widget
 
     def _invoke_and_hook(self, method, worker_attr, on_success, on_error, *args, **kwargs):
         """Ruft 'method' (eine bestehende Aktions-Methode des Hauptfensters)
@@ -616,7 +709,11 @@ class UpdateAssistantDialog(QDialog):
         return True
 
     def _update_progress_label(self):
-        if self._pos < 0:
+        if self._phase == "setup":
+            self.progress_label.setText(
+                tr("wizard_setup_progress", current=self._setup_pos + 1, total=len(self._setup_order))
+            )
+        elif self._pos < 0:
             self.progress_label.setText(tr("wizard_progress_intro"))
         else:
             self.progress_label.setText(
@@ -627,6 +724,7 @@ class UpdateAssistantDialog(QDialog):
     # Intro-Seite: Auswahl, welche Teile der Assistent ausführen soll
     # ------------------------------------------------------------------
     def _build_intro_page(self):
+        self._intro_gen += 1
         page = QWidget()
         layout = QVBoxLayout(page)
 
@@ -634,40 +732,60 @@ class UpdateAssistantDialog(QDialog):
         intro_label.setWordWrap(True)
         layout.addWidget(intro_label)
 
-        self.wizard_has_github = self.main_window.repo_obj is not None
-        self.wizard_has_aur = self.main_window.aur_repo_obj is not None
+        self.wizard_has_github = (
+            self.main_window.repo_obj is not None and not self.aur_only
+        )
+        self.wizard_has_aur = (
+            self.main_window.aur_repo_obj is not None and not self.github_only
+        )
+        # GitHub-Version anzeigen, wenn ein Repository gewählt ist (auch im
+        # reinen AUR-Modus, um die aktuelle Release-Version vorzuschlagen)
+        self._show_github_version = (
+            (self.wizard_has_github or self.aur_only)
+            and self.main_window.selected_repo is not None
+        )
 
-        if not self.wizard_has_github:
+        if self.aur_only:
+            layout.addWidget(self._info_label(tr("wizard_intro_aur_only")))
+        elif not self.wizard_has_github:
             layout.addWidget(self._info_label(tr("wizard_intro_no_github")))
 
         self.release_check = QCheckBox(tr("wizard_check_release"))
-        self.release_check.setEnabled(
+        release_possible = (
             self.wizard_has_github and self.main_window.selected_repo is not None
         )
-        layout.addWidget(self.release_check)
+        self.release_check.setEnabled(release_possible)
+        # Standardmäßig aktiv (wie beim AUR-Schritt), sobald ein GitHub-
+        # Repository ausgewählt ist - sonst wird das Release leicht vergessen.
+        self.release_check.setChecked(release_possible)
+        if self.wizard_has_github and not release_possible:
+            layout.addWidget(self._info_label(tr("wizard_intro_no_release_repo")))
+        if not self.aur_only:
+            layout.addWidget(self.release_check)
 
         self.aur_check = QCheckBox(tr("wizard_check_aur"))
         self.aur_check.setEnabled(self.wizard_has_aur)
-        self.aur_check.setChecked(self.wizard_has_aur)
-        if not self.wizard_has_aur:
-            layout.addWidget(self._info_label(tr("wizard_intro_no_aur")))
-        layout.addWidget(self.aur_check)
+        self.aur_check.setChecked(self.wizard_has_aur and not self._skip_aur)
+        if self.github_only:
+            layout.addWidget(self._info_label(tr("wizard_intro_github_only")))
+        else:
+            if not self.wizard_has_aur:
+                layout.addWidget(self._info_label(tr("wizard_intro_no_aur")))
+            layout.addWidget(self.aur_check)
 
         # ---- Neue Version wählen (füttert Release-Tag & AUR-pkgver) ----
         self.current_github_version = None
         self.current_aur_version = (
             self.main_window.aur_version_edit.text().strip() if self.wizard_has_aur else None
         )
-        version_relevant = (
-            self.wizard_has_aur or (self.wizard_has_github and self.main_window.selected_repo)
-        )
+        version_relevant = self.wizard_has_aur or self._show_github_version
         if version_relevant:
             version_group = QGroupBox(tr("wizard_version_group_title"))
             v_layout = QVBoxLayout(version_group)
 
             self.github_version_label = QLabel()
             self.github_version_label.setWordWrap(True)
-            if self.wizard_has_github and self.main_window.selected_repo:
+            if self._show_github_version:
                 v_layout.addWidget(self.github_version_label)
 
             self.aur_version_label = QLabel()
@@ -706,10 +824,11 @@ class UpdateAssistantDialog(QDialog):
 
         layout.addStretch(1)
         self._add_page("intro", page)
+        self._apply_tooltips()
 
         if version_relevant:
             self._update_version_suggestion()
-        if self.wizard_has_github and self.main_window.selected_repo:
+        if self._show_github_version:
             self._fetch_current_github_version()
 
     def _info_label(self, text):
@@ -720,10 +839,15 @@ class UpdateAssistantDialog(QDialog):
 
     def _fetch_current_github_version(self):
         self.github_version_label.setText(tr("wizard_version_checking"))
+        gen = self._intro_gen  # Ergebnisse einer alten Intro-Seite verwerfen
         worker = GithubWorker(self._get_latest_release_tag)
-        worker.finished.connect(self._on_github_version_fetched)
-        worker.error.connect(lambda _e: self._on_github_version_fetched(None))
-        self._version_check_worker = worker  # Referenz halten
+        worker.finished.connect(
+            lambda tag, g=gen: self._on_github_version_fetched(tag) if g == self._intro_gen else None
+        )
+        worker.error.connect(
+            lambda _e, g=gen: self._on_github_version_fetched(None) if g == self._intro_gen else None
+        )
+        self._workers.append(worker)  # Referenz halten
         worker.start()
 
     def _get_latest_release_tag(self):
@@ -755,6 +879,14 @@ class UpdateAssistantDialog(QDialog):
         self.bump_patch_btn.setEnabled(parseable)
         self.bump_minor_btn.setEnabled(parseable)
         self.bump_major_btn.setEnabled(parseable)
+        if self.aur_only and self.current_github_version:
+            # GitHub ist schon aktuell: genau diese Version ins AUR bringen
+            # (ohne weiter hochzuzählen), solange sie vom AUR abweicht.
+            gh_ver = self.current_github_version.lstrip("vV")
+            if gh_ver and gh_ver != self.current_aur_version:
+                self.new_version_edit.setText(gh_ver)
+                self.version_hint_label.setText(tr("wizard_aur_only_version_hint"))
+                return
         if not self.new_version_edit.text().strip():
             if parseable:
                 self.new_version_edit.setText(bump_semver(baseline, "patch"))
@@ -772,16 +904,12 @@ class UpdateAssistantDialog(QDialog):
             self.new_version_edit.setText(bumped)
 
     def _show_intro(self):
+        self._phase = "flow"
         self._pos = -1
-        self.stack.setCurrentIndex(self.page_index["intro"])
-        self.back_btn.setEnabled(False)
+        self.stack.setCurrentWidget(self.page_index["intro"])
+        self.back_btn.setEnabled(True)  # zurück zur Einrichtung
         self.next_btn.setEnabled(self.wizard_has_github or self.wizard_has_aur)
         self.next_btn.setText(tr("wizard_btn_next"))
-        try:
-            self.next_btn.clicked.disconnect()
-        except TypeError:
-            pass
-        self.next_btn.clicked.connect(self._start_flow)
         self._update_progress_label()
 
     def _start_flow(self):
@@ -804,8 +932,6 @@ class UpdateAssistantDialog(QDialog):
         self._order = order
         self._pos = 0
 
-        self.next_btn.clicked.disconnect()
-        self.next_btn.clicked.connect(self._go_next)
         self.back_btn.setEnabled(True)
         self._show_step()
 
@@ -814,7 +940,7 @@ class UpdateAssistantDialog(QDialog):
     # ------------------------------------------------------------------
     def _show_step(self):
         key = self._order[self._pos]
-        self.stack.setCurrentIndex(self.page_index[key])
+        self.stack.setCurrentWidget(self.page_index[key])
         self.back_btn.setEnabled(True)
         self._update_progress_label()
         refresh = getattr(self, f"_refresh_{key}", None)
@@ -835,7 +961,11 @@ class UpdateAssistantDialog(QDialog):
         self._show_step()
 
     def _go_back(self):
-        if self._pos <= 0:
+        if self._pos < 0:
+            # Intro-Seite: zurück in die Einrichtung
+            self._enter_setup(len(self._setup_order) - 1, direction=-1)
+            return
+        if self._pos == 0:
             self._show_intro()
             return
         self._pos -= 1
@@ -865,6 +995,736 @@ class UpdateAssistantDialog(QDialog):
             if reply != QMessageBox.StandardButton.Yes:
                 return
         super().reject()
+
+    # ==================================================================
+    # EINRICHTUNGSPHASE: Verbindung -> Repository -> Ordner -> AUR
+    # ------------------------------------------------------------------
+    # Grundidee: Fehlt etwas (keine Verbindung, kein Repository, kein
+    # lokaler Ordner, kein AUR-Ordner), bietet die jeweilige Seite eine
+    # Auswahl an und macht - wo möglich - einen konkreten Vorschlag
+    # (z.B. "Repository klonen"). Wie im restlichen Assistenten werden
+    # dafür die bestehenden Methoden des Hauptfensters benutzt.
+    # ==================================================================
+    def _dispatch_next(self):
+        if self._phase == "setup":
+            self._setup_next()
+        elif self._pos < 0:
+            self._start_flow()
+        else:
+            self._go_next()
+
+    def _dispatch_back(self):
+        if self._phase == "setup":
+            self._setup_back()
+        else:
+            self._go_back()
+
+    def _apply_tooltips(self):
+        """Setzt die Tooltips aller festen Bedienelemente. Wird nach dem
+        Aufbau der Seiten und nach jedem Neubau der Intro-Seite aufgerufen."""
+        pairs = (
+            ("back_btn", "tip_btn_back"), ("next_btn", "tip_btn_next"),
+            ("close_btn", "tip_btn_close"),
+            ("sc_saved_btn", "tip_connect_saved"), ("sc_other_btn", "tip_connect_other"),
+            ("sc_user_edit", "tip_connect_user"), ("sc_token_edit", "tip_connect_token"),
+            ("sc_create_token_btn", "tip_connect_create_token"),
+            ("sc_connect_btn", "tip_connect_btn"), ("sc_skip_btn", "tip_skip_github"),
+            ("sr_filter", "tip_repo_filter"), ("sr_list", "tip_repo_list"),
+            ("sr_refresh_btn", "tip_repo_refresh"), ("sr_new_btn", "tip_repo_new"),
+            ("sr_skip_btn", "tip_skip_github"),
+            ("sf_list", "tip_folder_list"), ("sf_default_btn", "tip_folder_default"),
+            ("sa_list", "tip_aur_list"),
+            ("release_check", "tip_intro_release"), ("aur_check", "tip_intro_aur"),
+            ("new_version_edit", "tip_intro_version"),
+            ("bump_patch_btn", "tip_bump_patch"), ("bump_minor_btn", "tip_bump_minor"),
+            ("bump_major_btn", "tip_bump_major"),
+            ("wizard_commit_msg_edit", "tip_commit_msg"), ("commit_run_btn", "tip_commit_run"),
+            ("push_run_btn", "tip_push_run"),
+            ("release_run_btn", "tip_release_run"), ("release_skip_btn", "tip_release_skip"),
+            ("wizard_aur_version_edit", "tip_aur_version_edit"),
+            ("aur_version_run_btn", "tip_aur_version_run"),
+            ("wizard_aur_commit_msg_edit", "tip_aur_commit_msg"),
+            ("aur_commit_push_run_btn", "tip_aur_commit_push_run"),
+        )
+        for attr, key in pairs:
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setToolTip(tr(key))
+
+    def _setup_has_connection(self):
+        return self.main_window.github is not None
+
+    def _enter_setup(self, pos, direction=1):
+        """Zeigt Einrichtungsschritt 'pos'. Die Verbindungsseite wird
+        übersprungen, solange schon verbunden ist."""
+        while (
+            0 <= pos < len(self._setup_order)
+            and self._setup_order[pos] == "connect"
+            and self._setup_has_connection()
+        ):
+            pos += direction
+        if pos < 0:
+            pos = 0
+        if pos >= len(self._setup_order):
+            self._finish_setup()
+            return
+        self._phase = "setup"
+        self._pos = -1
+        self._setup_pos = pos
+        key = self._setup_order[pos]
+        self.stack.setCurrentWidget(self.page_index["setup_" + key])
+        self.back_btn.setEnabled(pos > 0 and any(
+            not (k == "connect" and self._setup_has_connection())
+            for k in self._setup_order[:pos]
+        ))
+        self.next_btn.setText(tr("wizard_btn_next"))
+        self.next_btn.setEnabled(False)
+        self._update_progress_label()
+        getattr(self, f"_setup_refresh_{key}")()
+
+    def _setup_current_key(self):
+        return self._setup_order[self._setup_pos]
+
+    def _setup_next(self):
+        key = self._setup_current_key()
+        if getattr(self, f"_setup_commit_{key}")():
+            self._enter_setup(self._setup_pos + 1)
+
+    def _setup_back(self):
+        # Ohne GitHub-Verbindung (nur AUR) führt "Zurück" direkt zur Verbindungsseite
+        if not self._setup_has_connection():
+            self._enter_setup(0)
+            return
+        self._enter_setup(self._setup_pos - 1, direction=-1)
+
+    def _setup_skip_github(self):
+        """Springt direkt zur AUR-Auswahl (für Nutzer, die nur das AUR-Paket pflegen)."""
+        self._enter_setup(self._setup_order.index("aur"))
+
+    def _finish_setup(self):
+        self._phase = "flow"
+        self._build_intro_page()
+        self._show_intro()
+
+    def _setup_set_next(self, enabled):
+        self.next_btn.setEnabled(bool(enabled))
+
+    def _setup_hook_current(self, key, fn):
+        """Führt fn nur aus, wenn der Assistent noch auf dieser Setup-Seite steht."""
+        if self._phase == "setup" and self._setup_current_key() == key:
+            fn()
+
+    # ------------------------------------------------------------------
+    # Setup 1: Verbindung zu GitHub
+    # ------------------------------------------------------------------
+    def _build_setup_connect_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(self._title_label(tr("wizard_setup_connect_title")))
+
+        self.sc_info = QLabel()
+        self.sc_info.setWordWrap(True)
+        layout.addWidget(self.sc_info)
+
+        self.sc_saved_row = QWidget()
+        saved_layout = QHBoxLayout(self.sc_saved_row)
+        saved_layout.setContentsMargins(0, 0, 0, 0)
+        self.sc_saved_btn = QPushButton(tr("wizard_setup_connect_yes"))
+        self.sc_saved_btn.clicked.connect(self._setup_connect_saved)
+        saved_layout.addWidget(self.sc_saved_btn)
+        self.sc_other_btn = QPushButton(tr("wizard_setup_connect_other"))
+        self.sc_other_btn.clicked.connect(lambda: self.sc_manual_group.setVisible(True))
+        saved_layout.addWidget(self.sc_other_btn)
+        saved_layout.addStretch(1)
+        layout.addWidget(self.sc_saved_row)
+
+        self.sc_manual_group = QWidget()
+        form = QFormLayout(self.sc_manual_group)
+        form.setContentsMargins(0, 0, 0, 0)
+        self.sc_user_edit = QLineEdit()
+        form.addRow(tr("wizard_setup_connect_user"), self.sc_user_edit)
+        self.sc_token_edit = QLineEdit()
+        self.sc_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow(tr("wizard_setup_connect_token"), self.sc_token_edit)
+        btn_row = QHBoxLayout()
+        self.sc_create_token_btn = QPushButton(tr("wizard_setup_connect_create_token"))
+        self.sc_create_token_btn.clicked.connect(self.main_window.on_create_token)
+        btn_row.addWidget(self.sc_create_token_btn)
+        self.sc_connect_btn = QPushButton(tr("wizard_setup_connect_btn"))
+        self.sc_connect_btn.clicked.connect(self._setup_connect_manual)
+        btn_row.addWidget(self.sc_connect_btn)
+        btn_row.addStretch(1)
+        form.addRow(btn_row)
+        layout.addWidget(self.sc_manual_group)
+
+        self.sc_status = QLabel()
+        self.sc_status.setWordWrap(True)
+        layout.addWidget(self.sc_status)
+
+        self.sc_skip_btn = QPushButton(tr("wizard_setup_skip_github"))
+        self.sc_skip_btn.clicked.connect(self._setup_skip_github)
+        skip_row = QHBoxLayout()
+        skip_row.addWidget(self.sc_skip_btn)
+        skip_row.addStretch(1)
+        layout.addLayout(skip_row)
+
+        layout.addStretch(1)
+        self._add_page("setup_connect", page)
+
+    def _setup_refresh_connect(self):
+        cfg = load_config()
+        self.sc_status.setText("")
+        self._setup_connect_busy(False)
+        has_saved = bool(cfg.get("username") and cfg.get("token"))
+        if has_saved:
+            self.sc_info.setText(tr("wizard_setup_connect_saved", username=cfg["username"]))
+            self.sc_manual_group.setVisible(False)
+        else:
+            self.sc_info.setText(tr("wizard_setup_connect_none"))
+            self.sc_manual_group.setVisible(True)
+        self.sc_saved_row.setVisible(has_saved)
+        self.sc_user_edit.setText(cfg.get("username", "") or self.main_window.user_edit.text())
+        if not self.sc_token_edit.text():
+            self.sc_token_edit.setText(cfg.get("token", ""))
+        self._setup_set_next(False)
+
+    def _setup_connect_busy(self, busy):
+        for w in (self.sc_saved_btn, self.sc_other_btn, self.sc_connect_btn,
+                  self.sc_create_token_btn, self.sc_skip_btn):
+            w.setEnabled(not busy)
+
+    def _setup_connect_saved(self):
+        cfg = load_config()
+        self._setup_do_connect(cfg.get("username", ""), cfg.get("token", ""))
+
+    def _setup_connect_manual(self):
+        self._setup_do_connect(self.sc_user_edit.text().strip(), self.sc_token_edit.text().strip())
+
+    def _setup_do_connect(self, username, token):
+        if not username or not token:
+            self.sc_manual_group.setVisible(True)
+            self.sc_status.setText(tr("wizard_setup_connect_missing"))
+            return
+        mw = self.main_window
+        mw.user_edit.setText(username)
+        mw.token_edit.setText(token)
+        self.sc_status.setText(tr("wizard_setup_connecting"))
+        self._setup_connect_busy(True)
+        started = self._invoke_and_hook(
+            mw.on_connect, "worker", self._on_setup_connected, self._on_setup_connect_failed
+        )
+        if not started:
+            self._setup_connect_busy(False)
+            self.sc_status.setText(tr("wizard_setup_connect_fail_other"))
+
+    def _on_setup_connected(self, _result):
+        # Das Hauptfenster hat sein finished-Signal zuerst verarbeitet:
+        # github/repos sind bereits gesetzt und die Zugangsdaten gespeichert.
+        def go():
+            self.sc_status.setText(tr("wizard_setup_connected", username=self.main_window.current_user.login))
+            self._enter_setup(self._setup_pos + 1)
+        self._setup_hook_current("connect", go)
+
+    def _on_setup_connect_failed(self, error_msg):
+        def show():
+            self._setup_connect_busy(False)
+            self.sc_manual_group.setVisible(True)
+            if "401" in error_msg or "Bad credentials" in error_msg:
+                text = tr("wizard_setup_connect_fail_token")
+            elif any(w in error_msg for w in ("Connection", "resolve", "timed out", "Max retries", "Network")):
+                text = tr("wizard_setup_connect_fail_network")
+            else:
+                text = tr("wizard_setup_connect_fail_other")
+            self.sc_status.setText(text)
+        self._setup_hook_current("connect", show)
+
+    def _setup_commit_connect(self):
+        return self._setup_has_connection()
+
+    # ------------------------------------------------------------------
+    # Setup 2: GitHub-Repository wählen
+    # ------------------------------------------------------------------
+    def _build_setup_repo_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(self._title_label(tr("wizard_setup_repo_title")))
+
+        self.sr_filter = QLineEdit()
+        self.sr_filter.setPlaceholderText(tr("wizard_setup_repo_filter_placeholder"))
+        self.sr_filter.textChanged.connect(self._setup_repo_apply_filter)
+        layout.addWidget(self.sr_filter)
+
+        self.sr_list = QListWidget()
+        self.sr_list.itemSelectionChanged.connect(self._setup_repo_selection_changed)
+        self.sr_list.itemDoubleClicked.connect(lambda _i: self._setup_next())
+        layout.addWidget(self.sr_list, 1)
+
+        self.sr_hint = QLabel()
+        self.sr_hint.setWordWrap(True)
+        layout.addWidget(self.sr_hint)
+
+        btn_row = QHBoxLayout()
+        self.sr_refresh_btn = QPushButton(tr("wizard_setup_repo_refresh"))
+        self.sr_refresh_btn.clicked.connect(self._setup_repo_refresh_clicked)
+        btn_row.addWidget(self.sr_refresh_btn)
+        self.sr_new_btn = QPushButton(tr("wizard_setup_repo_new"))
+        self.sr_new_btn.clicked.connect(self._setup_repo_new_clicked)
+        btn_row.addWidget(self.sr_new_btn)
+        self.sr_skip_btn = QPushButton(tr("wizard_setup_skip_github"))
+        self.sr_skip_btn.clicked.connect(self._setup_skip_github)
+        btn_row.addWidget(self.sr_skip_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+        self._add_page("setup_repo", page)
+
+    def _setup_refresh_repo(self):
+        mw = self.main_window
+        preselect = mw.selected_repo.full_name if mw.selected_repo else None
+        if preselect is None and mw.repo_obj is not None:
+            # Ein bereits geladener lokaler Ordner verrät, welches Repo gemeint ist
+            url = git_origin_url(mw.local_repo_path) if mw.local_repo_path else None
+            for repo in mw.repos:
+                if url_matches_repo(url, repo.full_name):
+                    preselect = repo.full_name
+                    break
+        self.sr_filter.clear()
+        self._setup_repo_fill(preselect)
+
+    def _setup_repo_fill(self, preselect=None):
+        mw = self.main_window
+        if preselect is None:
+            current = self.sr_list.currentItem()
+            if current is not None:
+                preselect = current.data(Qt.ItemDataRole.UserRole).full_name
+        self.sr_list.blockSignals(True)
+        self.sr_list.clear()
+        select_item = None
+        for repo in mw.repos:
+            label = repo.name + ("  🔒" if getattr(repo, "private", False) else "")
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, repo)
+            tip = repo.full_name
+            if getattr(repo, "description", None):
+                tip += "\n" + repo.description
+            item.setToolTip(tip)
+            self.sr_list.addItem(item)
+            if preselect and repo.full_name == preselect:
+                select_item = item
+        self.sr_list.blockSignals(False)
+        if select_item is not None:
+            self.sr_list.setCurrentItem(select_item)
+            self.sr_list.scrollToItem(select_item)
+        self._setup_repo_apply_filter()
+        if not mw.repos:
+            self.sr_hint.setText(tr("wizard_setup_repo_empty"))
+            self.sr_new_btn.setDefault(True)
+        else:
+            self.sr_hint.setText(tr("wizard_setup_repo_count", count=len(mw.repos)))
+        self._setup_repo_selection_changed()
+
+    def _setup_repo_apply_filter(self):
+        needle = self.sr_filter.text().strip().lower()
+        for i in range(self.sr_list.count()):
+            item = self.sr_list.item(i)
+            item.setHidden(bool(needle) and needle not in item.text().lower())
+
+    def _setup_repo_selection_changed(self):
+        self._setup_set_next(bool(self.sr_list.selectedItems()))
+
+    def _setup_repo_busy(self, busy):
+        self.sr_refresh_btn.setEnabled(not busy)
+        self.sr_new_btn.setEnabled(not busy)
+        self.sr_skip_btn.setEnabled(not busy)
+
+    def _setup_repo_refresh_clicked(self, select=None):
+        self._setup_repo_busy(True)
+        self.sr_hint.setText(tr("wizard_setup_repo_loading"))
+        keep = select if isinstance(select, str) else None
+        started = self._invoke_and_hook(
+            self.main_window.on_refresh, "worker",
+            lambda _r: self._setup_hook_current("repo", lambda: self._after_repo_refresh(keep)),
+            lambda _e: self._setup_hook_current("repo", lambda: self._after_repo_refresh(keep)),
+        )
+        if not started:
+            self._setup_repo_busy(False)
+            self._setup_repo_fill()
+
+    def _after_repo_refresh(self, select=None):
+        self._setup_repo_busy(False)
+        self._setup_repo_fill(select)
+
+    def _setup_repo_new_clicked(self):
+        started = self._invoke_and_hook(
+            self.main_window.on_new_repo, "worker", self._on_setup_repo_created, lambda _e: None
+        )
+        # started == False: Dialog abgebrochen o.ä. - nichts zu tun
+
+    def _on_setup_repo_created(self, repo):
+        # _on_create_finished des Hauptfensters hat bereits ein Refresh gestartet
+        # (neuer main_window.worker) - an dessen Ende das neue Repo auswählen.
+        worker = self.main_window.worker
+        name = repo.full_name
+        if worker is not None:
+            worker.finished.connect(
+                lambda _r: self._setup_hook_current("repo", lambda: self._setup_repo_fill(name))
+            )
+
+    def _setup_commit_repo(self):
+        items = self.sr_list.selectedItems()
+        if not items:
+            self.sr_hint.setText(tr("wizard_setup_repo_pick"))
+            return False
+        repo = items[0].data(Qt.ItemDataRole.UserRole)
+        mw = self.main_window
+        # Auswahl im Hauptfenster spiegeln (löst on_repo_selected aus)
+        for i in range(mw.repo_list.count()):
+            it = mw.repo_list.item(i)
+            if it.data(Qt.ItemDataRole.UserRole).full_name == repo.full_name:
+                mw.repo_list.setCurrentItem(it)
+                break
+        mw.selected_repo = repo
+        mw.on_repo_selected() if mw.repo_list.selectedItems() else None
+        mw.selected_repo = repo
+        return True
+
+    # ------------------------------------------------------------------
+    # Setup 3: lokaler Ordner
+    # ------------------------------------------------------------------
+    def _build_setup_folder_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        self.sf_title = self._title_label("")
+        layout.addWidget(self.sf_title)
+        self.sf_intro = QLabel(tr("wizard_setup_folder_intro"))
+        self.sf_intro.setWordWrap(True)
+        layout.addWidget(self.sf_intro)
+
+        self.sf_list = QListWidget()
+        self.sf_list.itemSelectionChanged.connect(
+            lambda: self._setup_set_next(bool(self.sf_list.selectedItems()) and not self._sf_busy)
+        )
+        layout.addWidget(self.sf_list, 1)
+
+        self.sf_hint = QLabel()
+        self.sf_hint.setWordWrap(True)
+        layout.addWidget(self.sf_hint)
+
+        row = QHBoxLayout()
+        self.sf_default_label = QLabel()
+        self.sf_default_label.setWordWrap(True)
+        row.addWidget(self.sf_default_label, 1)
+        self.sf_default_btn = QPushButton(tr("wizard_setup_folder_change_default"))
+        self.sf_default_btn.clicked.connect(self._setup_folder_change_default)
+        row.addWidget(self.sf_default_btn)
+        layout.addLayout(row)
+        self._sf_busy = False
+        self._add_page("setup_folder", page)
+
+    def _setup_folder_change_default(self):
+        self.main_window.on_change_default_folder()
+        self._setup_refresh_folder()
+
+    def _setup_find_local_copies(self, repo):
+        """Sucht im Standardordner (eine Ebene tief) Ordner, deren origin
+        zum gewählten GitHub-Repository gehört."""
+        mw = self.main_window
+        found = []
+        if not mw.default_folder or not os.path.isdir(mw.default_folder):
+            return found
+        for path in list_subfolders(mw.default_folder):
+            if url_matches_repo(git_origin_url(path), repo.full_name):
+                found.append(path)
+        return found
+
+    def _setup_refresh_folder(self):
+        mw = self.main_window
+        repo = mw.selected_repo
+        self._sf_busy = False
+        self.sf_list.clear()
+        self.sf_default_label.setText(
+            tr("wizard_setup_folder_default_label", path=mw.default_folder or "–")
+        )
+        if repo is None:
+            self.sf_title.setText(tr("wizard_setup_folder_title", name="–"))
+            self.sf_hint.setText(tr("wizard_setup_folder_no_repo"))
+            self._setup_set_next(False)
+            return
+        self.sf_title.setText(tr("wizard_setup_folder_title", name=repo.name))
+
+        def add(kind, path, text, suggested=False):
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, (kind, path))
+            item.setToolTip(tr("tip_folder_" + kind, path=path or "", name=repo.name))
+            self.sf_list.addItem(item)
+            return item
+
+        listed = set()
+        first = None
+        if mw.repo_obj is not None and mw.local_repo_path and mw._local_repo_matches_selected():
+            first = add("loaded", mw.local_repo_path,
+                        tr("wizard_setup_folder_loaded", path=mw.local_repo_path))
+            listed.add(os.path.normpath(mw.local_repo_path))
+        found = [p for p in self._setup_find_local_copies(repo) if os.path.normpath(p) not in listed]
+        for path in found:
+            it = add("load", path, tr("wizard_setup_folder_found", path=path))
+            first = first or it
+            listed.add(os.path.normpath(path))
+
+        target = os.path.join(mw.default_folder, repo.name) if mw.default_folder else None
+        suggestion_item = None
+        if target and os.path.normpath(target) not in listed:
+            if os.path.isdir(os.path.join(target, ".git")):
+                it = add("load_link", target, tr("wizard_setup_folder_unlinked", path=target))
+                first = first or it
+            elif not os.path.exists(target):
+                suggestion_item = add("clone", target, tr("wizard_setup_folder_clone", path=target))
+                if getattr(repo, "size", 0) == 0:
+                    add("init", target, tr("wizard_setup_folder_init"))
+        add("browse", None, tr("wizard_setup_folder_browse"))
+
+        if first is not None:
+            self.sf_list.setCurrentItem(first)
+            self.sf_hint.setText("")
+        elif suggestion_item is not None:
+            self.sf_list.setCurrentItem(suggestion_item)
+            self.sf_hint.setText(tr("wizard_setup_folder_none_hint", name=repo.name))
+        else:
+            if not mw.default_folder:
+                self.sf_hint.setText(tr("wizard_setup_folder_no_default"))
+            elif target and os.path.exists(target):
+                self.sf_hint.setText(tr("wizard_setup_folder_exists_not_git", path=target))
+            self.sf_list.setCurrentRow(self.sf_list.count() - 1)
+        self._setup_set_next(bool(self.sf_list.selectedItems()))
+
+    def _setup_folder_matches(self):
+        mw = self.main_window
+        return mw.repo_obj is not None and mw._local_repo_matches_selected()
+
+    def _setup_folder_link_if_needed(self, path):
+        """Lädt 'path' und verknüpft ihn bei Bedarf mit dem gewählten
+        GitHub-Repository. Gibt True zurück, wenn danach alles passt."""
+        mw = self.main_window
+        repo = mw.selected_repo
+        if not mw._load_repo(path):
+            return False
+        if mw._local_repo_matches_selected():
+            return True
+        if mw.repo_obj.remotes:
+            reply = QMessageBox.question(
+                self, tr("wizard_setup_folder_relink_title"),
+                tr("wizard_setup_folder_relink_q", path=path, name=repo.name),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return False
+        mw.on_link_remote()
+        return mw._local_repo_matches_selected()
+
+    def _setup_commit_folder(self):
+        mw = self.main_window
+        item = self.sf_list.currentItem()
+        if item is None:
+            return False
+        kind, path = item.data(Qt.ItemDataRole.UserRole)
+        repo = mw.selected_repo
+
+        if kind == "loaded":
+            return True
+        if kind == "load":
+            return bool(mw._load_repo(path)) and self._setup_folder_matches()
+        if kind == "load_link":
+            ok = self._setup_folder_link_if_needed(path)
+            if not ok:
+                self.sf_hint.setText(tr("wizard_setup_folder_not_linked", name=repo.name))
+            return ok
+        if kind == "browse":
+            start = mw.default_folder or os.path.expanduser("~")
+            folder = QFileDialog.getExistingDirectory(
+                self, tr("dlg_choose_local_repo_folder"), start, QFileDialog.Option.ShowDirsOnly
+            )
+            if not folder:
+                return False
+            if not os.path.isdir(os.path.join(folder, ".git")):
+                reply = QMessageBox.question(
+                    self, tr("wizard_setup_folder_not_git_title"),
+                    tr("wizard_setup_folder_not_git_q", path=folder, name=repo.name),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return False
+                try:
+                    Repo.init(folder)
+                except Exception as e:
+                    QMessageBox.critical(self, tr("msg_error_title"), tr("msg_init_error", error=e))
+                    return False
+            ok = self._setup_folder_link_if_needed(folder)
+            if not ok:
+                self.sf_hint.setText(tr("wizard_setup_folder_not_linked", name=repo.name))
+            return ok
+        if kind == "init":
+            mw.on_init_repo()  # fragt selbst nach dem Namen
+            ok = self._setup_folder_matches()
+            if not ok:
+                self.sf_hint.setText(tr("wizard_setup_folder_failed"))
+            return ok
+        if kind == "clone":
+            self._sf_busy = True
+            self._setup_set_next(False)
+            self.sf_hint.setText(tr("wizard_setup_folder_running"))
+            started = self._invoke_and_hook(
+                mw.on_clone_repo, "worker", self._on_setup_clone_done, self._on_setup_clone_failed
+            )
+            if not started:
+                self._sf_busy = False
+                self._setup_set_next(True)
+                self.sf_hint.setText("")
+            return False  # weiter geht es erst, wenn der Klon fertig ist
+        return False
+
+    def _on_setup_clone_done(self, _repo):
+        def go():
+            self._sf_busy = False
+            if self._setup_folder_matches():
+                self._enter_setup(self._setup_pos + 1)
+            else:
+                self._setup_refresh_folder()
+                self.sf_hint.setText(tr("wizard_setup_folder_failed"))
+        self._setup_hook_current("folder", go)
+
+    def _on_setup_clone_failed(self, _error):
+        def show():
+            self._sf_busy = False
+            self._setup_set_next(bool(self.sf_list.selectedItems()))
+            self.sf_hint.setText(tr("wizard_setup_folder_failed"))
+        self._setup_hook_current("folder", show)
+
+    # ------------------------------------------------------------------
+    # Setup 4: AUR-Ordner (optional)
+    # ------------------------------------------------------------------
+    def _build_setup_aur_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(self._title_label(tr("wizard_setup_aur_title")))
+        intro = QLabel(tr("wizard_setup_aur_intro"))
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        self.sa_list = QListWidget()
+        layout.addWidget(self.sa_list, 1)
+        self.sa_hint = QLabel()
+        self.sa_hint.setWordWrap(True)
+        layout.addWidget(self.sa_hint)
+        self._add_page("setup_aur", page)
+
+    def _setup_find_aur_folders(self):
+        """Sucht Ordner mit PKGBUILD und einem origin auf aur.archlinux.org."""
+        mw = self.main_window
+        bases = []
+        for b in (mw.aur_default_folder, mw.default_folder):
+            if b and os.path.isdir(b):
+                bases.append(b)
+        if mw.aur_default_folder and os.path.isdir(mw.aur_default_folder):
+            parent = os.path.dirname(mw.aur_default_folder)
+            if os.path.isdir(parent):
+                bases.append(parent)
+        if mw.local_repo_path:
+            parent = os.path.dirname(mw.local_repo_path)
+            if os.path.isdir(parent):
+                bases.append(parent)
+        candidates = []
+        for base in bases:
+            candidates.append(base)
+            candidates.extend(list_subfolders(base))
+        result, seen = [], set()
+        for path in candidates:
+            norm = os.path.normpath(path)
+            if norm in seen:
+                continue
+            seen.add(norm)
+            if not os.path.isfile(os.path.join(path, "PKGBUILD")):
+                continue
+            url = git_origin_url(path) or ""
+            if "aur.archlinux.org" in url:
+                result.append(path)
+        name = mw.selected_repo.name.lower() if mw.selected_repo else ""
+        result.sort(key=lambda p: (name not in os.path.basename(p).lower(), p))
+        return result
+
+    def _setup_refresh_aur(self):
+        mw = self.main_window
+        self.sa_list.clear()
+
+        def add(kind, path, text):
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, (kind, path))
+            item.setToolTip(tr("tip_aur_" + kind, path=path or ""))
+            self.sa_list.addItem(item)
+            return item
+
+        listed = set()
+        first = None
+        if mw.aur_repo_obj is not None and mw.aur_folder:
+            first = add("loaded", mw.aur_folder, tr("wizard_setup_aur_loaded", path=mw.aur_folder))
+            listed.add(os.path.normpath(mw.aur_folder))
+        found = [p for p in self._setup_find_aur_folders() if os.path.normpath(p) not in listed]
+        for path in found:
+            it = add("load", path, tr("wizard_setup_aur_found", path=path))
+            first = first or it
+        add("browse", None, tr("wizard_setup_aur_browse"))
+        if mw.selected_repo is not None:
+            add("new", None, tr("wizard_setup_aur_new"))
+        skip = add("skip", None, tr("wizard_setup_aur_skip"))
+
+        hints = []
+        if first is None:
+            hints.append(tr("wizard_setup_aur_none_hint"))
+        if mw.local_repo_path and os.path.isfile(os.path.join(mw.local_repo_path, "PKGBUILD")):
+            hints.append(tr("wizard_setup_aur_pkgbuild_hint"))
+        self.sa_hint.setText("\n".join(hints))
+        self.sa_list.setCurrentItem(first or skip)
+        self._setup_set_next(True)
+        self.next_btn.setText(tr("wizard_btn_next"))
+
+    def _setup_commit_aur(self):
+        mw = self.main_window
+        item = self.sa_list.currentItem()
+        if item is None:
+            return False
+        kind, path = item.data(Qt.ItemDataRole.UserRole)
+        self._skip_aur = False
+
+        if kind == "loaded":
+            return True
+        if kind == "skip":
+            self._skip_aur = True
+            return True
+        if kind == "load":
+            if mw._load_aur_repo(path):
+                mw.aur_default_folder = path
+                settings = load_settings()
+                settings["aur_default_folder"] = path
+                save_settings(settings)
+                return True
+            self.sa_hint.setText(tr("wizard_setup_folder_failed"))
+            return False
+        if kind == "browse":
+            before = mw.aur_folder
+            mw.on_aur_browse_folder()
+            if mw.aur_repo_obj is not None and mw.aur_folder != before:
+                return True
+            return False
+        if kind == "new":
+            started = self._invoke_and_hook(
+                lambda: mw.on_new_aur_package(prefill_repo=mw.selected_repo),
+                "aur_worker", self._on_setup_aur_created, lambda _e: None
+            )
+            return False  # weiter geht es erst, wenn das Paket angelegt ist
+        return False
+
+    def _on_setup_aur_created(self, _data):
+        self._setup_hook_current("aur", lambda: self._enter_setup(self._setup_pos + 1))
+
 
     # ------------------------------------------------------------------
     # Schritt: GitHub Commit
@@ -1016,7 +1876,7 @@ class UpdateAssistantDialog(QDialog):
 
     def _on_push_step_error(self, error_msg):
         self.push_run_btn.setEnabled(True)
-        QMessageBox.critical(self, tr("msg_error_title"), tr("msg_push_error", error=error_msg))
+        QMessageBox.critical(self, tr("msg_error_title"), self.main_window._push_error_text(error_msg))
 
     # ------------------------------------------------------------------
     # Schritt: GitHub Release (optional)
@@ -1038,7 +1898,7 @@ class UpdateAssistantDialog(QDialog):
         self.release_status_label.setWordWrap(True)
         layout.addWidget(self.release_status_label)
 
-        skip_btn = QPushButton(tr("wizard_btn_skip_step"))
+        skip_btn = self.release_skip_btn = QPushButton(tr("wizard_btn_skip_step"))
         skip_btn.clicked.connect(lambda: self._mark_done("release"))
         layout.addWidget(skip_btn)
         layout.addStretch(1)
@@ -1313,6 +2173,9 @@ class MainWindow(QMainWindow):
         # _guard_aur_push_order()).
         self.aur_version_updated = False
 
+        self._saved_username = ""
+        self._saved_token = ""
+        self._token_save_prompt_open = False
         self.init_ui()
         self.load_saved_credentials()
         self.load_settings()
@@ -1321,13 +2184,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Update-Assistent
     # ------------------------------------------------------------------
-    def on_open_update_assistant(self):
-        if not self.repo_obj and not self.aur_repo_obj:
-            QMessageBox.information(
-                self, tr("msg_no_repo_title"), tr("wizard_no_local_repo") + " " + tr("wizard_no_aur_repo")
-            )
-            return
-        dialog = UpdateAssistantDialog(self)
+    def start_update_assistant(self, mode="full"):
+        """Startet die ausgewählte Variante des Update-Assistenten."""
+        if mode == "github":
+            dialog = UpdateAssistantDialog(self, github_only=True)
+        elif mode == "aur":
+            dialog = UpdateAssistantDialog(self, aur_only=True)
+        else:
+            dialog = UpdateAssistantDialog(self)
         dialog.exec()
 
     # ------------------------------------------------------------------
@@ -1357,9 +2221,16 @@ class MainWindow(QMainWindow):
 
         # Menü
         self.tools_menu.setTitle(tr("menu_tools"))
-        self.action_update_assistant.setText(tr("menu_action_update_assistant"))
-        self.action_update_assistant.setToolTip(tr("menu_action_update_assistant_tooltip"))
-        self.action_update_assistant.setStatusTip(tr("menu_action_update_assistant_tooltip"))
+        self.action_assistant_full.setText(tr("dlg_assistant_scope_full"))
+        self.action_assistant_github.setText(tr("dlg_assistant_scope_github"))
+        self.action_assistant_aur.setText(tr("dlg_assistant_scope_aur"))
+        self.settings_menu.setTitle(tr("menu_settings"))
+        self.action_remember_repo.setText(tr("menu_action_remember_repo"))
+        self.action_remember_repo.setToolTip(tr("menu_action_remember_repo_tooltip"))
+        self.action_remember_repo.setStatusTip(tr("menu_action_remember_repo_tooltip"))
+        self.action_default_repo.setText(tr("menu_action_default_repo"))
+        self.action_default_repo.setToolTip(tr("menu_action_default_repo_tooltip"))
+        self.action_default_repo.setStatusTip(tr("menu_action_default_repo_tooltip"))
         self.help_menu.setTitle(tr("menu_help"))
         self.action_help.setText(tr("menu_action_manual"))
         self.action_help.setToolTip(tr("menu_action_manual_tooltip"))
@@ -1384,10 +2255,9 @@ class MainWindow(QMainWindow):
         self.token_label.setText(tr("login_token_label"))
         self.token_edit.setPlaceholderText(tr("login_token_placeholder"))
         self.token_edit.setToolTip(tr("login_token_tooltip"))
+        self.save_token_btn.setToolTip("Token speichern")
         self.connect_btn.setText(tr("btn_connect"))
         self.connect_btn.setToolTip(tr("btn_connect_tooltip"))
-        self.check_token_btn.setText(tr("btn_check_token"))
-        self.check_token_btn.setToolTip(tr("btn_check_token_tooltip"))
         self.create_token_btn.setText(tr("btn_create_token"))
         self.create_token_btn.setToolTip(tr("btn_create_token_tooltip"))
 
@@ -1405,8 +2275,6 @@ class MainWindow(QMainWindow):
         self.local_group.setTitle(tr("local_group_title"))
         self.default_folder_label.setText(tr("local_default_folder_label"))
         self.default_folder_edit.setPlaceholderText(tr("local_default_folder_placeholder"))
-        self.set_default_btn.setText(tr("btn_set_default"))
-        self.set_default_btn.setToolTip(tr("btn_set_default_tooltip"))
         self.change_default_btn.setText(tr("btn_change_default"))
         self.change_default_btn.setToolTip(tr("btn_change_default_tooltip"))
         self.clone_btn.setText(tr("btn_clone"))
@@ -1500,6 +2368,25 @@ class MainWindow(QMainWindow):
         origin.set_url(auth_url)
         return auth_url
 
+    def _push_error_text(self, error_msg):
+        """Fehlertext für einen gescheiterten Push. Bei HTTP 403 (angemeldet,
+        aber nicht schreibberechtigt) kommt eine Erklärung mit Lösungs-
+        vorschlägen dazu - der Rohfehler allein sagt dazu nichts."""
+        text = tr("msg_push_error", error=error_msg)
+        if "403" in error_msg:
+            user = self.current_user.login if self.current_user else "?"
+            owner = "?"
+            try:
+                m = re.search(r"github\.com[/:]([^/]+)/", self.repo_obj.remotes.origin.url)
+                if m:
+                    owner = m.group(1)
+            except Exception:
+                pass
+            text += "\n\n" + tr("msg_push_403_hint", user=user, owner=owner)
+            if user.lower() != owner.lower():
+                text += "\n\n" + tr("msg_push_403_owner", user=user, owner=owner)
+        return text
+
     # ------------------------------------------------------------------
     # UI initialisieren
     # ------------------------------------------------------------------
@@ -1518,11 +2405,45 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
 
         self.tools_menu = menubar.addMenu(tr("menu_tools"))
-        self.action_update_assistant = QAction(tr("menu_action_update_assistant"), self)
-        self.action_update_assistant.setToolTip(tr("menu_action_update_assistant_tooltip"))
-        self.action_update_assistant.setStatusTip(tr("menu_action_update_assistant_tooltip"))
-        self.action_update_assistant.triggered.connect(self.on_open_update_assistant)
-        self.tools_menu.addAction(self.action_update_assistant)
+
+        # Die drei Assistenten stehen direkt im Menü "Assistenten".
+        # Es gibt bewusst keinen vorgeschalteten Eintrag "Update-Assistent".
+        self.action_assistant_full = QAction(tr("dlg_assistant_scope_full"), self)
+        self.action_assistant_full.triggered.connect(
+            lambda checked=False: self.start_update_assistant("full")
+        )
+        self.tools_menu.addAction(self.action_assistant_full)
+
+        self.action_assistant_github = QAction(tr("dlg_assistant_scope_github"), self)
+        self.action_assistant_github.triggered.connect(
+            lambda checked=False: self.start_update_assistant("github")
+        )
+        self.tools_menu.addAction(self.action_assistant_github)
+
+        self.action_assistant_aur = QAction(tr("dlg_assistant_scope_aur"), self)
+        self.action_assistant_aur.triggered.connect(
+            lambda checked=False: self.start_update_assistant("aur")
+        )
+        self.tools_menu.addAction(self.action_assistant_aur)
+
+
+        # ---------- Einstellungen ----------
+        self.settings_menu = menubar.addMenu(tr("menu_settings"))
+        self.action_remember_repo = QAction(tr("menu_action_remember_repo"), self)
+        self.action_remember_repo.setCheckable(True)
+        self.action_remember_repo.setChecked(
+            bool(load_settings().get("remember_last_repo", True))
+        )
+        self.action_remember_repo.setToolTip(tr("menu_action_remember_repo_tooltip"))
+        self.action_remember_repo.setStatusTip(tr("menu_action_remember_repo_tooltip"))
+        self.action_remember_repo.toggled.connect(self.on_toggle_remember_repo)
+        self.settings_menu.addAction(self.action_remember_repo)
+
+        self.action_default_repo = QAction(tr("menu_action_default_repo"), self)
+        self.action_default_repo.setToolTip(tr("menu_action_default_repo_tooltip"))
+        self.action_default_repo.setStatusTip(tr("menu_action_default_repo_tooltip"))
+        self.action_default_repo.triggered.connect(self.on_set_default_repo)
+        self.settings_menu.addAction(self.action_default_repo)
 
         self.help_menu = menubar.addMenu(tr("menu_help"))
 
@@ -1580,24 +2501,36 @@ class MainWindow(QMainWindow):
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.token_edit.setToolTip(tr("login_token_tooltip"))
         token_layout.addWidget(self.token_edit)
+        self.save_token_btn = QPushButton()
+        self.save_token_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton)
+        )
+        self.save_token_btn.setToolTip("Token speichern")
+        self.save_token_btn.setAccessibleName("Token speichern")
+        self.save_token_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.save_token_btn.setAutoDefault(False)
+        self.save_token_btn.setDefault(False)
+        # Explizite Wrapper verhindern, dass das von clicked ausgesendete
+        # bool-Argument die Slot-Aufrufsignatur beeinflusst.
+        self.save_token_btn.clicked.connect(
+            lambda checked=False: self.on_save_token()
+        )
+        token_layout.addWidget(self.save_token_btn)
+        # Änderungen an Benutzername UND Token gemeinsam behandeln.
+        self.user_edit.installEventFilter(self)
+        self.token_edit.installEventFilter(self)
         login_layout.addLayout(token_layout)
 
         btn_login_layout = QHBoxLayout()
-        self.connect_btn = QPushButton(tr("btn_connect"))
-        self.connect_btn.setToolTip(tr("btn_connect_tooltip"))
-        self.connect_btn.clicked.connect(self.on_connect)
-        btn_login_layout.addWidget(self.connect_btn)
-
-        self.check_token_btn = QPushButton(tr("btn_check_token"))
-        self.check_token_btn.setToolTip(tr("btn_check_token_tooltip"))
-        self.check_token_btn.clicked.connect(self.on_check_token)
-        self.check_token_btn.setEnabled(False)
-        btn_login_layout.addWidget(self.check_token_btn)
-
         self.create_token_btn = QPushButton(tr("btn_create_token"))
         self.create_token_btn.setToolTip(tr("btn_create_token_tooltip"))
         self.create_token_btn.clicked.connect(self.on_create_token)
         btn_login_layout.addWidget(self.create_token_btn)
+
+        self.connect_btn = QPushButton(tr("btn_connect"))
+        self.connect_btn.setToolTip(tr("btn_connect_tooltip"))
+        self.connect_btn.clicked.connect(self.on_connect)
+        btn_login_layout.addWidget(self.connect_btn)
 
         login_layout.addLayout(btn_login_layout)
         main_layout.addWidget(self.login_group)
@@ -1612,6 +2545,12 @@ class MainWindow(QMainWindow):
         list_layout.addWidget(self.repo_list)
 
         btn_layout = QHBoxLayout()
+        self.refresh_btn = QPushButton(tr("btn_refresh"))
+        self.refresh_btn.setToolTip(tr("btn_refresh_tooltip"))
+        self.refresh_btn.clicked.connect(self.on_refresh)
+        self.refresh_btn.setEnabled(False)
+        btn_layout.addWidget(self.refresh_btn)
+
         self.new_btn = QPushButton(tr("btn_new_repo"))
         self.new_btn.setToolTip(tr("btn_new_repo_tooltip"))
         self.new_btn.clicked.connect(self.on_new_repo)
@@ -1624,12 +2563,6 @@ class MainWindow(QMainWindow):
         self.delete_btn.setEnabled(False)
         btn_layout.addWidget(self.delete_btn)
 
-        self.refresh_btn = QPushButton(tr("btn_refresh"))
-        self.refresh_btn.setToolTip(tr("btn_refresh_tooltip"))
-        self.refresh_btn.clicked.connect(self.on_refresh)
-        self.refresh_btn.setEnabled(False)
-        btn_layout.addWidget(self.refresh_btn)
-
         list_layout.addLayout(btn_layout)
         main_layout.addWidget(self.list_group)
 
@@ -1637,7 +2570,7 @@ class MainWindow(QMainWindow):
         self.local_group = QGroupBox(tr("local_group_title"))
         local_layout = QVBoxLayout(self.local_group)
 
-        # Standardordner
+        # 1. Standardordner (Zielordner für Klonen / Neu anlegen)
         default_layout = QHBoxLayout()
         self.default_folder_label = QLabel(tr("local_default_folder_label"))
         default_layout.addWidget(self.default_folder_label)
@@ -1646,11 +2579,6 @@ class MainWindow(QMainWindow):
         self.default_folder_edit.setPlaceholderText(tr("local_default_folder_placeholder"))
         default_layout.addWidget(self.default_folder_edit)
 
-        self.set_default_btn = QPushButton(tr("btn_set_default"))
-        self.set_default_btn.setToolTip(tr("btn_set_default_tooltip"))
-        self.set_default_btn.clicked.connect(self.on_set_default_folder)
-        default_layout.addWidget(self.set_default_btn)
-
         self.change_default_btn = QPushButton(tr("btn_change_default"))
         self.change_default_btn.setToolTip(tr("btn_change_default_tooltip"))
         self.change_default_btn.clicked.connect(self.on_change_default_folder)
@@ -1658,7 +2586,8 @@ class MainWindow(QMainWindow):
 
         local_layout.addLayout(default_layout)
 
-        # Aktionen
+        # 2. Lokales Repository bereitstellen: klonen / neu anlegen /
+        #    vorhandenen Ordner laden / Ordner nachträglich verknüpfen
         action_layout = QHBoxLayout()
         self.clone_btn = QPushButton(tr("btn_clone"))
         self.clone_btn.setToolTip(tr("btn_clone_tooltip"))
@@ -1678,67 +2607,29 @@ class MainWindow(QMainWindow):
         self.browse_btn.setEnabled(False)
         action_layout.addWidget(self.browse_btn)
 
+        self.link_remote_btn = QPushButton(tr("btn_link_remote"))
+        self.link_remote_btn.setToolTip(tr("btn_link_remote_tooltip"))
+        self.link_remote_btn.clicked.connect(self.on_link_remote)
+        self.link_remote_btn.setEnabled(False)
+        action_layout.addWidget(self.link_remote_btn)
+
         local_layout.addLayout(action_layout)
 
-        # Pfad
+        # 3. Geladenes Repository: Pfad und aktueller Branch
         path_layout = QHBoxLayout()
         self.path_label = QLabel(tr("local_loaded_label"))
         path_layout.addWidget(self.path_label)
         self.path_edit = QLineEdit()
         self.path_edit.setReadOnly(True)
         self.path_edit.setPlaceholderText(tr("local_loaded_placeholder"))
-        path_layout.addWidget(self.path_edit)
+        path_layout.addWidget(self.path_edit, 1)
+        self.branch_label = QLabel(tr("branch_label_empty"))
+        path_layout.addWidget(self.branch_label)
         local_layout.addLayout(path_layout)
 
-        # Commit
-        commit_layout = QHBoxLayout()
-        self.commit_label = QLabel(tr("local_commit_msg_label"))
-        commit_layout.addWidget(self.commit_label)
-        self.commit_msg_edit = QLineEdit()
-        self.commit_msg_edit.setPlaceholderText(tr("local_commit_msg_placeholder"))
-        commit_layout.addWidget(self.commit_msg_edit)
-
-        self.commit_btn = QPushButton(tr("btn_commit"))
-        self.commit_btn.setToolTip(tr("btn_commit_tooltip"))
-        self.commit_btn.clicked.connect(self.on_commit)
-        self.commit_btn.setEnabled(False)
-        commit_layout.addWidget(self.commit_btn)
-
-        local_layout.addLayout(commit_layout)
-
-        # Push/Pull/Branch
-        push_pull_layout = QHBoxLayout()
-        self.push_btn = QPushButton(tr("btn_push"))
-        self.push_btn.setToolTip(tr("btn_push_tooltip"))
-        self.push_btn.clicked.connect(self.on_push)
-        self.push_btn.setEnabled(False)
-        push_pull_layout.addWidget(self.push_btn)
-
-        self.pull_btn = QPushButton(tr("btn_pull"))
-        self.pull_btn.setToolTip(tr("btn_pull_tooltip"))
-        self.pull_btn.clicked.connect(self.on_pull)
-        self.pull_btn.setEnabled(False)
-        push_pull_layout.addWidget(self.pull_btn)
-
-        self.release_btn = QPushButton(tr("btn_release"))
-        self.release_btn.setToolTip(tr("btn_release_tooltip"))
-        self.release_btn.clicked.connect(self.on_create_release)
-        self.release_btn.setEnabled(False)
-        push_pull_layout.addWidget(self.release_btn)
-
-        self.link_remote_btn = QPushButton(tr("btn_link_remote"))
-        self.link_remote_btn.setToolTip(tr("btn_link_remote_tooltip"))
-        self.link_remote_btn.clicked.connect(self.on_link_remote)
-        self.link_remote_btn.setEnabled(False)
-        push_pull_layout.addWidget(self.link_remote_btn)
-
-        self.branch_label = QLabel(tr("branch_label_empty"))
-        push_pull_layout.addWidget(self.branch_label)
-        push_pull_layout.addStretch()
-
-        local_layout.addLayout(push_pull_layout)
-
-        # Status-Analyse / Aktionsempfehlung
+        # 4. Status-Analyse / Aktionsempfehlung. Die Analyse läuft nach dem
+        #    Laden sowie nach Commit/Push/Pull automatisch; der Button dient
+        #    zum manuellen Aktualisieren (z. B. nach externen Änderungen).
         recommend_layout = QHBoxLayout()
         self.check_status_btn = QPushButton(tr("btn_check_status"))
         self.check_status_btn.setToolTip(tr("btn_check_status_tooltip"))
@@ -1757,6 +2648,45 @@ class MainWindow(QMainWindow):
         recommend_layout.addWidget(self.suggested_action_btn)
 
         local_layout.addLayout(recommend_layout)
+
+        # 5. Commit
+        commit_layout = QHBoxLayout()
+        self.commit_label = QLabel(tr("local_commit_msg_label"))
+        commit_layout.addWidget(self.commit_label)
+        self.commit_msg_edit = QLineEdit()
+        self.commit_msg_edit.setPlaceholderText(tr("local_commit_msg_placeholder"))
+        commit_layout.addWidget(self.commit_msg_edit)
+
+        self.commit_btn = QPushButton(tr("btn_commit"))
+        self.commit_btn.setToolTip(tr("btn_commit_tooltip"))
+        self.commit_btn.clicked.connect(self.on_commit)
+        self.commit_btn.setEnabled(False)
+        commit_layout.addWidget(self.commit_btn)
+
+        local_layout.addLayout(commit_layout)
+
+        # 6. Mit GitHub abgleichen: erst holen (Pull), dann senden (Push),
+        #    zuletzt optional ein Release erstellen
+        sync_layout = QHBoxLayout()
+        self.pull_btn = QPushButton(tr("btn_pull"))
+        self.pull_btn.setToolTip(tr("btn_pull_tooltip"))
+        self.pull_btn.clicked.connect(self.on_pull)
+        self.pull_btn.setEnabled(False)
+        sync_layout.addWidget(self.pull_btn)
+
+        self.push_btn = QPushButton(tr("btn_push"))
+        self.push_btn.setToolTip(tr("btn_push_tooltip"))
+        self.push_btn.clicked.connect(self.on_push)
+        self.push_btn.setEnabled(False)
+        sync_layout.addWidget(self.push_btn)
+
+        self.release_btn = QPushButton(tr("btn_release"))
+        self.release_btn.setToolTip(tr("btn_release_tooltip"))
+        self.release_btn.clicked.connect(self.on_create_release)
+        self.release_btn.setEnabled(False)
+        sync_layout.addWidget(self.release_btn)
+
+        local_layout.addLayout(sync_layout)
 
         main_layout.addWidget(self.local_group)
 
@@ -1891,13 +2821,6 @@ class MainWindow(QMainWindow):
         settings['default_folder'] = folder
         save_settings(settings)
 
-    def on_set_default_folder(self):
-        if self.local_repo_path and os.path.isdir(self.local_repo_path):
-            self.save_default_folder(self.local_repo_path)
-            self.status_bar.showMessage(tr("status_default_folder_set", folder=self.local_repo_path))
-        else:
-            QMessageBox.warning(self, tr("msg_no_repo_title"), tr("msg_load_local_first"))
-
     def on_change_default_folder(self):
         folder = QFileDialog.getExistingDirectory(
             self,
@@ -1916,9 +2839,11 @@ class MainWindow(QMainWindow):
         config = load_config()
         if 'username' in config:
             self.user_edit.setText(config['username'])
+            self._saved_username = config['username']
         if 'token' in config:
             self.token = config['token']
             self.token_edit.setText(config['token'])
+            self._saved_token = config['token']
             if 'saved_at' in config:
                 try:
                     saved = datetime.datetime.fromisoformat(config['saved_at'])
@@ -1927,10 +2852,97 @@ class MainWindow(QMainWindow):
                     self.status_bar.showMessage(tr("status_token_saved_days", days=days))
                 except:
                     pass
-            self.check_token_btn.setEnabled(True)
             self.on_check_token()
-        else:
-            self.check_token_btn.setEnabled(False)
+
+    def eventFilter(self, watched, event):
+        """Speicherabfrage, wenn Benutzername oder Token verlassen werden.
+
+        Beim Wechsel zwischen den beiden Eingabefeldern wird noch nicht
+        gefragt; erst wenn der Fokus den gesamten Zugangsdatenbereich verlässt.
+        """
+        if (watched in (getattr(self, "user_edit", None),
+                        getattr(self, "token_edit", None))
+                and event.type() == QEvent.Type.FocusOut):
+            QTimer.singleShot(0, self._save_credentials_if_focus_left)
+        return super().eventFilter(watched, event)
+
+    def _save_credentials_if_focus_left(self):
+        focus = QApplication.focusWidget()
+        if focus in (self.user_edit, self.token_edit):
+            return
+        self.on_save_token()
+
+    def on_save_token(self):
+        """Speichert oder löscht Benutzername und Token gemeinsam."""
+        if self._token_save_prompt_open:
+            return
+
+        username = self.user_edit.text().strip()
+        token = self.token_edit.text().strip()
+        old_pair = (self._saved_username, self._saved_token)
+        new_pair = (username, token)
+        if new_pair == old_pair:
+            return
+
+        self._token_save_prompt_open = True
+        try:
+            if not username and not token:
+                reply = QMessageBox.question(
+                    self, "Zugangsdaten löschen?",
+                    "Benutzername und Token sind leer. Sollen die gespeicherten\n"
+                    "GitHub-Zugangsdaten vollständig gelöscht werden?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+                try:
+                    clear_config()
+                except OSError as error:
+                    QMessageBox.critical(
+                        self, tr("msg_error_title"),
+                        f"Die Zugangsdaten konnten nicht gelöscht werden:\n{error}"
+                    )
+                    return
+                self._saved_username = ""
+                self._saved_token = ""
+                self.token = None
+                self.status_bar.showMessage("GitHub-Zugangsdaten gelöscht")
+                return
+
+            if not username or not token:
+                QMessageBox.warning(
+                    self, tr("msg_error_title"),
+                    "Bitte Benutzername und Token eingeben. Um gespeicherte "
+                    "Zugangsdaten zu löschen, beide Felder leeren."
+                )
+                return
+
+            reply = QMessageBox.question(
+                self,
+                "Zugangsdaten speichern?",
+                "Benutzername und/oder Token wurden geändert. Sollen die neuen\n"
+                "GitHub-Zugangsdaten lokal gespeichert werden?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save
+            )
+            if reply != QMessageBox.StandardButton.Save:
+                return
+            try:
+                save_config(username, token)
+            except OSError as error:
+                QMessageBox.critical(
+                    self, tr("msg_error_title"),
+                    f"Die Zugangsdaten konnten nicht gespeichert werden:\n{error}"
+                )
+                return
+
+            self._saved_username = username
+            self._saved_token = token
+            self.token = token
+            self.status_bar.showMessage("GitHub-Zugangsdaten gespeichert")
+        finally:
+            self._token_save_prompt_open = False
 
     def on_check_token(self):
         token = self.token_edit.text().strip()
@@ -1939,7 +2951,6 @@ class MainWindow(QMainWindow):
             return
 
         self.status_bar.showMessage(tr("status_checking_token"))
-        self.check_token_btn.setEnabled(False)
 
         def test_token():
             auth = Auth.Token(token)
@@ -1953,7 +2964,6 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def _on_token_valid(self, username):
-        self.check_token_btn.setEnabled(True)
         config = load_config()
         if 'saved_at' in config:
             try:
@@ -1969,7 +2979,6 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(tr("status_token_valid", username=username))
 
     def _on_token_invalid(self, error_msg):
-        self.check_token_btn.setEnabled(True)
         self.status_bar.showMessage(tr("status_token_invalid"))
         if "401" in error_msg or "Bad credentials" in error_msg:
             reply = QMessageBox.warning(
@@ -2019,13 +3028,15 @@ class MainWindow(QMainWindow):
         self.connect_btn.setEnabled(True)
         self.new_btn.setEnabled(True)
         self.refresh_btn.setEnabled(True)
-        self.check_token_btn.setEnabled(True)
         self.browse_btn.setEnabled(True)
         self.clone_btn.setEnabled(True)
         self.init_btn.setEnabled(True)
         self.status_bar.showMessage(tr("status_connected_as", username=self.current_user.login))
         self._populate_repo_list()
-        save_config(self.user_edit.text().strip(), self.token)
+        saved_username = self.user_edit.text().strip()
+        save_config(saved_username, self.token)
+        self._saved_username = saved_username
+        self._saved_token = self.token
 
     def _on_connect_error(self, error_msg):
         self.connect_btn.setEnabled(True)
@@ -2041,11 +3052,71 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(repo.name)
             item.setData(Qt.ItemDataRole.UserRole, repo)
             self.repo_list.addItem(item)
+        self._restore_last_repo()
+
+    def _restore_last_repo(self):
+        """Wählt das zuletzt benutzte Repository wieder aus (falls die
+        Einstellung 'Letztes Repository merken' aktiv ist)."""
+        settings = load_settings()
+        # Ein festgelegtes Standard-Repository hat Vorrang vor dem zuletzt
+        # benutzten.
+        last = settings.get("default_repo")
+        if not last and self.action_remember_repo.isChecked():
+            last = settings.get("last_repo")
+        if not last:
+            return
+        for i in range(self.repo_list.count()):
+            item = self.repo_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole).full_name == last:
+                self.repo_list.setCurrentItem(item)
+                self.repo_list.scrollToItem(item)
+                break
+
+    def on_set_default_repo(self):
+        if not self.repos:
+            QMessageBox.information(
+                self, tr("dlg_default_repo_title"), tr("msg_default_repo_need_login")
+            )
+            return
+        none_label = tr("dlg_default_repo_none")
+        names = [none_label] + sorted(r.full_name for r in self.repos)
+        settings = load_settings()
+        current = settings.get("default_repo")
+        start = names.index(current) if current in names else 0
+        choice, ok = QInputDialog.getItem(
+            self, tr("dlg_default_repo_title"), tr("dlg_default_repo_label"),
+            names, start, False
+        )
+        if not ok:
+            return
+        if choice == none_label:
+            settings.pop("default_repo", None)
+            save_settings(settings)
+            self.status_bar.showMessage(tr("status_default_repo_cleared"))
+        else:
+            settings["default_repo"] = choice
+            save_settings(settings)
+            self.status_bar.showMessage(tr("status_default_repo_set", repo=choice))
+            self._restore_last_repo()
+
+    def on_toggle_remember_repo(self, checked):
+        settings = load_settings()
+        settings["remember_last_repo"] = bool(checked)
+        if not checked:
+            settings.pop("last_repo", None)
+        elif self.selected_repo is not None:
+            settings["last_repo"] = self.selected_repo.full_name
+        save_settings(settings)
 
     def on_repo_selected(self):
         selected_items = self.repo_list.selectedItems()
         if selected_items:
             self.selected_repo = selected_items[0].data(Qt.ItemDataRole.UserRole)
+            if self.action_remember_repo.isChecked():
+                settings = load_settings()
+                if settings.get("last_repo") != self.selected_repo.full_name:
+                    settings["last_repo"] = self.selected_repo.full_name
+                    save_settings(settings)
             self.delete_btn.setEnabled(True)
             self.release_btn.setEnabled(True)
         else:
@@ -3058,7 +4129,7 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.StandardButton.Yes:
                 self.on_pull()
         else:
-            QMessageBox.critical(self, tr("msg_error_title"), tr("msg_push_error", error=error_msg))
+            QMessageBox.critical(self, tr("msg_error_title"), self._push_error_text(error_msg))
 
     def on_pull(self):
         if not self.repo_obj:

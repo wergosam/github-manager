@@ -105,8 +105,8 @@ TRANSLATIONS = {
       und beim nächsten Start automatisch geladen.</li>
 </ul>
 <div class="tipp">
-  <b>Tipp:</b> Mit <b>„Token prüfen"</b> kannst du jederzeit die Gültigkeit
-  deines Tokens testen, ohne dich neu zu verbinden.
+  <b>Tipp:</b> Ein gespeicherter Token wird beim Start automatisch auf
+  Gültigkeit geprüft. Ist er abgelaufen, wirst du darauf hingewiesen.
 </div>
 
 <h2>2. Repositories verwalten</h2>
@@ -135,8 +135,7 @@ TRANSLATIONS = {
 <p>Der Standardordner ist der Basisordner, in dem Repositories geklont oder
 initialisiert werden.</p>
 <ul>
-  <li><b>„Als Standard setzen"</b> – übernimmt den aktuell geladenen Repo-Pfad als Standard.</li>
-  <li><b>„Ändern"</b> – öffnet einen Ordner-Auswahldialog.</li>
+  <li><b>„Ändern"</b> – öffnet einen Ordner-Auswahldialog, um den Standardordner festzulegen.</li>
 </ul>
 <h3>Repository klonen</h3>
 <ul>
@@ -284,7 +283,8 @@ initialisiert werden.</p>
 <p>Über das Menü <b>„Assistenten → Update-Assistent..."</b> führt ein geführter
 Dialog Schritt für Schritt durch ein komplettes Update, in der richtigen
 Reihenfolge – die Buttons zum Weitergehen sind erst aktiv, wenn der jeweilige
-Schritt erledigt ist.</p>
+Schritt erledigt ist. Vor dem Start wählst du den Umfang: <b>GitHub und
+AUR</b>, <b>nur GitHub</b> oder <b>nur AUR</b>.</p>
 <h3>Ablauf</h3>
 <ol>
   <li><b>Startseite:</b> Auswahl, ob am Ende ein GitHub-Release erstellt und/oder
@@ -332,7 +332,7 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
         # ---- Dialog: Über ----
         "dlg_about_title": "Über GitHub Repository Manager",
         "about_app_title": "GitHub Repository Manager",
-        "about_version": "Version 1.0.7",
+        "about_version": "Version 1.0.9",
         "about_author_block": (
             "<b>Autor:</b> Jürg Rechsteiner<br>"
             "<b>Website:</b> <a href='https://www.computer-experte.ch'>computer-experte.ch</a><br>"
@@ -344,7 +344,7 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
         ),
 
         # ---- Hauptfenster: Titel / Menü ----
-        "main_window_title": "GitHub Repository Manager 1.07",
+        "main_window_title": "GitHub Repository Manager 1.0.9",
         "menu_help": "&Hilfe",
         "menu_action_manual": "&Benutzerhandbuch",
         "menu_action_manual_tooltip": (
@@ -378,8 +378,6 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
         "login_token_tooltip": "Gib deinen Personal Access Token (PAT) ein.",
         "btn_connect": "Verbinden",
         "btn_connect_tooltip": "Mit GitHub verbinden",
-        "btn_check_token": "Token prüfen",
-        "btn_check_token_tooltip": "Prüft, ob der Token gültig ist",
         "btn_create_token": "Neuen Token erstellen",
         "btn_create_token_tooltip": "Öffnet GitHub-Seite zum Erstellen eines Tokens",
 
@@ -397,8 +395,6 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
         "local_group_title": "Lokales Repository",
         "local_default_folder_label": "Standardordner:",
         "local_default_folder_placeholder": "Kein Standardordner gesetzt",
-        "btn_set_default": "Als Standard setzen",
-        "btn_set_default_tooltip": "Setzt aktuellen Ordner als Standard",
         "btn_change_default": "Ändern",
         "btn_change_default_tooltip": "Wählt neuen Standardordner",
         "btn_clone": "Repository klonen",
@@ -618,8 +614,46 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
             "PKGBUILD-Fix ohne Versionswechsel)"
         ),
 
+        # ---- Einstellungen ----
+        "menu_settings": "&Einstellungen",
+        "wizard_github_only_title": "GitHub-Update-Assistent",
+        "wizard_intro_github_only": "Nur-GitHub-Modus: Das AUR-Paket wird nicht angefasst. Das AUR kann später mit dem AUR-Update-Assistenten nachgezogen werden.",
+        "wizard_aur_only_title": "AUR-Update-Assistent",
+        "wizard_intro_aur_only": "Nur-AUR-Modus: GitHub wird nicht angefasst (kein Commit, Push oder Release). Das Release/der Tag mit der neuen Version muss auf GitHub bereits existieren, weil die Prüfsummen daraus berechnet werden.",
+        "wizard_aur_only_version_hint": "Vorgeschlagen wird die neueste GitHub-Release-Version. Bei Bedarf änderbar.",
+        "wizard_intro_no_release_repo": "Hinweis: Es ist kein GitHub-Repository in der Liste ausgewählt – deshalb kann der Schritt „GitHub-Release erstellen“ nicht ausgeführt werden. Bitte den Assistenten schließen, das Repository in der Liste anklicken und neu starten.",
+        "menu_action_default_repo": "Standard-Repository festlegen...",
+        "menu_action_default_repo_tooltip": (
+            "Legt ein Repository fest, das beim Start (nach der Anmeldung) "
+            "immer automatisch ausgewählt wird. Hat Vorrang vor „Letztes "
+            "Repository merken“. Gespeichert wird nur der Name in "
+            "settings.json."
+        ),
+        "dlg_default_repo_title": "Standard-Repository",
+        "dlg_default_repo_label": "Welches Repository soll beim Start vorausgewählt werden?",
+        "dlg_default_repo_none": "(Keines)",
+        "msg_default_repo_need_login": "Bitte zuerst anmelden, damit die Repository-Liste geladen werden kann.",
+        "status_default_repo_set": "Standard-Repository: {repo}",
+        "status_default_repo_cleared": "Standard-Repository entfernt.",
+        "menu_action_remember_repo": "Letztes Repository merken",
+        "menu_action_remember_repo_tooltip": (
+            "Wenn aktiv, merkt sich das Programm das zuletzt ausgewählte "
+            "GitHub-Repository und wählt es beim nächsten Start (nach der "
+            "Anmeldung) und nach dem Aktualisieren der Liste automatisch "
+            "wieder aus. Gespeichert wird nur der Repository-Name in "
+            "settings.json."
+        ),
+
         # ---- Update-Assistent ----
         "menu_tools": "&Assistenten",
+        "menu_assistant_full": "GitHub und AUR (komplettes Update)",
+        "menu_assistant_github": "Nur GitHub",
+        "menu_assistant_aur": "Nur AUR",
+        "dlg_assistant_scope_title": "Update-Assistent",
+        "dlg_assistant_scope_label": "Was soll aktualisiert werden?",
+        "dlg_assistant_scope_full": "GitHub und AUR (komplettes Update)",
+        "dlg_assistant_scope_github": "Nur GitHub (Commit, Push, optional Release)",
+        "dlg_assistant_scope_aur": "Nur AUR (GitHub ist bereits aktuell)",
         "menu_action_update_assistant": "Update-Assistent...",
         "menu_action_update_assistant_tooltip": (
             "Öffnet einen geführten Dialog, der Schritt für Schritt durch ein "
@@ -715,6 +749,104 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
         ),
         "wizard_aur_current_version": "Aktuell in der PKGBUILD: {version}",
         "wizard_summary_text": "Der Assistent ist durchgelaufen:",
+        "wizard_setup_progress": "Einrichtung {current} von {total}",
+        "wizard_setup_connect_title": "Verbindung zu GitHub",
+        "wizard_setup_connect_saved": "Es ist eine gespeicherte Verbindung vorhanden (Benutzer: {username}).\n\nSoll der Assistent jetzt mit dieser Verbindung zu GitHub verbinden?",
+        "wizard_setup_connect_none": "Es ist noch keine Verbindung gespeichert. Gib deinen GitHub-Benutzernamen und ein Personal Access Token ein – beides wird für die nächsten Starts gespeichert.",
+        "wizard_setup_connect_yes": "Ja, mit gespeicherter Verbindung verbinden",
+        "wizard_setup_connect_other": "Andere Zugangsdaten verwenden",
+        "wizard_setup_connect_btn": "Verbinden",
+        "wizard_setup_connect_user": "Benutzername:",
+        "wizard_setup_connect_token": "Token:",
+        "wizard_setup_connect_create_token": "Token erstellen...",
+        "wizard_setup_connecting": "Verbinde mit GitHub...",
+        "wizard_setup_connected": "Verbunden als {username}.",
+        "wizard_setup_connect_missing": "Bitte Benutzername und Token eingeben.",
+        "wizard_setup_connect_fail_token": "Der Token wurde abgelehnt (ungültig, abgelaufen oder ohne Recht 'repo'). Vorschlag: Erstelle mit „Token erstellen...“ einen neuen Token mit dem Recht 'repo' und trage ihn hier ein.",
+        "wizard_setup_connect_fail_network": "GitHub ist nicht erreichbar. Vorschlag: Internetverbindung prüfen und erneut versuchen.",
+        "wizard_setup_connect_fail_other": "Die Verbindung ist fehlgeschlagen. Vorschlag: Benutzername und Token prüfen und es erneut versuchen.",
+        "wizard_setup_skip_github": "Ohne GitHub fortfahren (nur AUR)",
+        "wizard_setup_repo_title": "Welches GitHub-Repository möchtest du öffnen?",
+        "wizard_setup_repo_filter_placeholder": "Repositories filtern...",
+        "wizard_setup_repo_refresh": "Liste aktualisieren",
+        "wizard_setup_repo_new": "Neues Repository erstellen...",
+        "wizard_setup_repo_empty": "Auf diesem Konto wurden keine Repositories gefunden. Vorschlag: Erstelle mit „Neues Repository erstellen...“ ein neues.",
+        "wizard_setup_repo_pick": "Bitte ein Repository aus der Liste auswählen.",
+        "wizard_setup_repo_count": "{count} Repositories verfügbar.",
+        "wizard_setup_repo_loading": "Aktualisiere...",
+        "wizard_setup_folder_title": "Lokaler Ordner für „{name}“",
+        "wizard_setup_folder_intro": "Wähle, welcher lokale Ordner verwendet werden soll:",
+        "wizard_setup_folder_loaded": "Bereits geladen: {path}",
+        "wizard_setup_folder_found": "Gefundene lokale Kopie: {path}",
+        "wizard_setup_folder_unlinked": "Vorhandener Ordner (noch nicht mit dem Repository verknüpft): {path}",
+        "wizard_setup_folder_clone": "Vorschlag: Repository klonen nach {path}",
+        "wizard_setup_folder_init": "Leeres Repository lokal neu anlegen (git init)...",
+        "wizard_setup_folder_browse": "Anderen Ordner auswählen...",
+        "wizard_setup_folder_none_hint": "Es wurde keine lokale Kopie von „{name}“ gefunden. Vorschlag: Das Repository in den Standardordner klonen.",
+        "wizard_setup_folder_no_default": "Es ist noch kein Standardordner festgelegt. Vorschlag: Lege zuerst mit „Standardordner ändern...“ einen Ordner fest – dann kann der Assistent suchen und klonen. Oder wähle unten einen anderen Ordner aus.",
+        "wizard_setup_folder_exists_not_git": "Der Ordner {path} existiert bereits, ist aber kein Git-Repository. Vorschlag: Wähle „Anderen Ordner auswählen...“ oder benenne den Ordner um.",
+        "wizard_setup_folder_change_default": "Standardordner ändern...",
+        "wizard_setup_folder_default_label": "Standardordner: {path}",
+        "wizard_setup_folder_no_repo": "Es ist kein GitHub-Repository gewählt. Gehe zurück und wähle eines aus.",
+        "wizard_setup_folder_not_git_title": "Kein Git-Repository",
+        "wizard_setup_folder_not_git_q": "Der Ordner\n{path}\nist noch kein Git-Repository. Soll er initialisiert und mit „{name}“ verknüpft werden?",
+        "wizard_setup_folder_relink_title": "Anderer Remote",
+        "wizard_setup_folder_relink_q": "Der Ordner\n{path}\ngehört zu einem anderen Remote. Soll der Remote 'origin' auf „{name}“ geändert werden?",
+        "wizard_setup_folder_running": "Arbeite...",
+        "wizard_setup_folder_failed": "Das hat nicht geklappt. Vorschlag: Prüfe die Fehlermeldung oder wähle eine andere Option.",
+        "wizard_setup_folder_not_linked": "Der Ordner konnte nicht mit „{name}“ verknüpft werden. Wähle eine andere Option.",
+        "wizard_setup_aur_title": "AUR-Paket",
+        "wizard_setup_aur_intro": "Soll auch ein AUR-Paket aktualisiert werden? Wähle den lokalen AUR-Ordner:",
+        "wizard_setup_aur_loaded": "Bereits geladen: {path}",
+        "wizard_setup_aur_found": "Gefundener AUR-Ordner: {path}",
+        "wizard_setup_aur_browse": "Anderen AUR-Ordner auswählen...",
+        "wizard_setup_aur_new": "Neues AUR-Paket für dieses Repository anlegen...",
+        "wizard_setup_aur_skip": "Ohne AUR fortfahren",
+        "wizard_setup_aur_none_hint": "Es wurde kein lokaler AUR-Ordner gefunden. Vorschlag: einen vorhandenen Ordner auswählen, ein neues AUR-Paket anlegen oder den AUR-Teil überspringen.",
+        "wizard_setup_aur_pkgbuild_hint": "Dein Projektordner enthält ein PKGBUILD – dafür gibt es vermutlich ein AUR-Paket.",
+        "tip_btn_back": "Zurück zum vorherigen Schritt. Bereits erledigte Schritte bleiben erledigt.",
+        "tip_btn_next": "Weiter zum nächsten Schritt. Auf den Ausführungsseiten erst aktiv, wenn der Schritt erledigt ist (oder nichts zu tun war).",
+        "tip_btn_close": "Assistent schließen. Sind noch Schritte offen, fragt er vorher nach.",
+        "tip_connect_saved": "Verbindet mit dem Benutzernamen und Token aus der gespeicherten Konfiguration (~/.config/github_manager/config.json).",
+        "tip_connect_other": "Zeigt die Eingabefelder, um mit einem anderen Konto oder Token zu verbinden.",
+        "tip_connect_user": "Dein GitHub-Benutzername.",
+        "tip_connect_token": "Personal Access Token mit dem Recht 'repo'. Wird nach erfolgreicher Verbindung für den nächsten Start gespeichert.",
+        "tip_connect_create_token": "Öffnet die GitHub-Token-Seite im Browser. Wähle dort das Recht 'repo' und kopiere den Token hierher.",
+        "tip_connect_btn": "Verbindet mit GitHub und lädt die Liste deiner Repositories.",
+        "tip_skip_github": "Überspringt Repository und Ordner und geht direkt zur AUR-Auswahl. Sinnvoll, wenn nur das AUR-Paket aktualisiert werden soll.",
+        "tip_repo_filter": "Filtert die Liste nach Namen, während du tippst.",
+        "tip_repo_list": "Alle Repositories deines Kontos. 🔒 = privat. Doppelklick wählt aus und geht weiter. Der Tooltip eines Eintrags zeigt den vollen Namen und die Beschreibung.",
+        "tip_repo_refresh": "Lädt die Repository-Liste neu von GitHub (z.B. nach Änderungen im Browser).",
+        "tip_repo_new": "Legt ein neues Repository auf GitHub an und wählt es danach aus.",
+        "tip_folder_list": "Welcher lokale Ordner soll für dieses Repository benutzt werden? „Weiter“ führt die gewählte Option aus.",
+        "tip_folder_default": "Der Standardordner ist der Ort, in dem der Assistent nach lokalen Kopien sucht und neue Klone ablegt.",
+        "tip_folder_loaded": "Dieser Ordner ist im Hauptfenster schon geladen und gehört zum gewählten Repository. Es muss nichts mehr getan werden.",
+        "tip_folder_load": "Lokale Kopie dieses Repositories ({path}). Sie wurde über die Remote-URL (origin) erkannt und wird geladen.",
+        "tip_folder_load_link": "Der Ordner {path} ist ein Git-Repository, aber noch nicht mit „{name}“ verknüpft. Er wird geladen und der Remote 'origin' gesetzt (bei einem anderen Remote fragt der Assistent vorher nach).",
+        "tip_folder_clone": "Lädt „{name}“ von GitHub nach {path}. Das kann je nach Größe etwas dauern. Danach geht es automatisch weiter.",
+        "tip_folder_init": "Das GitHub-Repository ist leer. Legt lokal ein neues Git-Repository an und verknüpft es mit GitHub. Du wirst nach dem Ordnernamen gefragt.",
+        "tip_folder_browse": "Wähle selbst einen Ordner. Ist es noch kein Git-Repository, bietet der Assistent an, es zu initialisieren und zu verknüpfen.",
+        "tip_aur_list": "Das AUR-Paket wird nach dem GitHub-Teil aktualisiert (neue pkgver, Prüfsummen, Commit, Push). Wähle den lokalen AUR-Ordner oder überspringe den Teil.",
+        "tip_aur_loaded": "Dieser AUR-Ordner ist im Hauptfenster schon geladen. Es muss nichts mehr getan werden.",
+        "tip_aur_load": "Ordner mit PKGBUILD und einem Remote auf aur.archlinux.org ({path}). Er wird geladen und als Standard-AUR-Ordner gemerkt.",
+        "tip_aur_browse": "Wähle selbst einen lokalen AUR-Ordner. Er muss ein PKGBUILD enthalten und ein Git-Repository sein.",
+        "tip_aur_new": "Legt für das gewählte GitHub-Repository ein neues AUR-Paket an (PKGBUILD-Grundgerüst, lokales Git-Repo, AUR-Remote).",
+        "tip_aur_skip": "Nur das GitHub-Repository wird aktualisiert. Der AUR-Teil entfällt in diesem Durchlauf.",
+        "tip_intro_release": "Erstellt am Ende ein GitHub-Release mit der neuen Version als Tag. Nur möglich, wenn ein GitHub-Repository gewählt ist.",
+        "tip_intro_aur": "Aktualisiert zusätzlich das AUR-Paket (pkgver, Prüfsummen) und pusht es zum AUR. Nur möglich, wenn ein AUR-Ordner geladen ist.",
+        "tip_intro_version": "Die neue Version, z.B. 1.2.3. Sie wird als Release-Tag und als pkgver im AUR verwendet. Vorschlag: letzter Release (oder AUR-Version) plus Patch.",
+        "tip_bump_patch": "Zählt die letzte Stelle hoch: 1.2.3 → 1.2.4 (Fehlerkorrekturen).",
+        "tip_bump_minor": "Zählt die mittlere Stelle hoch: 1.2.3 → 1.3.0 (neue Funktionen).",
+        "tip_bump_major": "Zählt die erste Stelle hoch: 1.2.3 → 2.0.0 (große oder inkompatible Änderungen).",
+        "tip_commit_msg": "Beschreibt kurz, was geändert wurde. Pflichtfeld für den Commit.",
+        "tip_commit_run": "Übernimmt alle Änderungen im lokalen Repository in einen neuen Commit.",
+        "tip_push_run": "Schickt die lokalen Commits zu GitHub. Der Assistent prüft das Ergebnis und meldet abgelehnte oder folgenlose Pushes.",
+        "tip_release_run": "Öffnet den Dialog zum Erstellen des GitHub-Releases (Tag, Titel, Beschreibung).",
+        "tip_release_skip": "Überspringt das Release. Du kannst es später im Hauptfenster erstellen.",
+        "tip_aur_version_edit": "Neue pkgver für das PKGBUILD. Vorbelegt mit der Version aus dem ersten Schritt.",
+        "tip_aur_version_run": "Schreibt die neue Version ins PKGBUILD und aktualisiert die Prüfsummen.",
+        "tip_aur_commit_msg": "Commit-Nachricht für das AUR-Repository. Vorbelegt mit der neuen Version.",
+        "tip_aur_commit_push_run": "Committet die PKGBUILD-Änderung und pusht sie zum AUR.",
 
         # ---- Statusleiste ----
         "status_ready": "Bereit",
@@ -738,7 +870,6 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
         "status_creating_release": "Erstelle Release '{tag}'...",
         "status_release_created": "Release '{tag}' erstellt",
         "status_release_failed": "Release-Erstellung fehlgeschlagen",
-        "status_default_folder_set": "Standardordner gesetzt: {folder}",
         "status_default_folder_changed": "Standardordner geändert: {folder}",
         "status_local_repo_loaded_no_remote": (
             "Lokales Repository geladen: {folder} – kein Remote konfiguriert. "
@@ -797,6 +928,13 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
         "msg_token_check_empty": "Kein Token eingegeben.",
         "msg_token_invalid_title": "Token ungültig",
         "msg_token_invalid_text": "Der Token ist ungültig. Möchtest du das Feld leeren?",
+        "msg_token_delete_title": "Gespeicherten Token löschen",
+        "msg_token_delete_text": "Soll der gespeicherte Token dauerhaft aus der Konfiguration gelöscht werden?",
+        "msg_token_save_title": "Neuen Token speichern",
+        "msg_token_save_text": "Der Token wurde geändert. Möchtest du den neuen Token dauerhaft speichern?",
+        "status_token_deleted": "Gespeicherter Token wurde gelöscht.",
+        "status_token_saved": "Neuer Token wurde gespeichert.",
+        "status_token_not_saved": "Neuer Token wird nur für diese Sitzung verwendet.",
         "msg_token_check_error": "Fehler bei der Token-Prüfung:\n{error}",
         "msg_create_token_title": "Token erstellen",
         "msg_create_token_text": (
@@ -923,6 +1061,8 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
             "zuerst zu holen und danach erneut zu pushen?"
         ),
         "msg_push_error": "Fehler beim Push:\n{error}",
+        "msg_push_403_hint": "Fehler 403 heißt: GitHub kennt dich, erlaubt aber das Schreiben nicht. Mögliche Ursachen und Lösungen:\n• Der Token hat kein Schreibrecht. Klassischer Token: Recht „repo“ nötig (bei öffentlichen Repos genügt „public_repo“). Fine-grained Token: Repository auswählen und „Contents: Read and write“ setzen.\n• Der Token ist abgelaufen oder wurde widerrufen. Erstelle unter „Token erstellen...“ einen neuen und verbinde neu.\n• Gehört das Repository einer Organisation mit SSO, den Token dort unter „Configure SSO“ freigeben.\n• Der Branch ist geschützt (Branch protection) und erlaubt keinen direkten Push.",
+        "msg_push_403_owner": "Hinweis: Du bist als „{user}“ angemeldet, das Repository gehört aber „{owner}“. Dann musst du dort als Collaborator mit Schreibrecht eingetragen sein – oder mit dem Konto „{owner}“ verbinden.",
         "msg_pull_error": "Fehler beim Pull:\n{error}",
         "msg_check_status_error": "Fehler bei der Statusprüfung:\n{error}",
         "msg_remote_ahead_title": "Remote ist voraus",
@@ -1114,8 +1254,8 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
       and loaded automatically the next time you start the app.</li>
 </ul>
 <div class="tipp">
-  <b>Tip:</b> Use <b>"Check token"</b> at any time to test whether your
-  token is still valid without reconnecting.
+  <b>Tip:</b> A saved token is checked automatically on startup. If it has
+  expired, you will be notified.
 </div>
 
 <h2>2. Managing repositories</h2>
@@ -1144,8 +1284,7 @@ PKGBUILD-Fix ohne Versionswechsel.</p>
 <p>The default folder is the base folder where repositories are cloned or
 initialized.</p>
 <ul>
-  <li><b>"Set as default"</b> – uses the currently loaded repo path as the default.</li>
-  <li><b>"Change"</b> – opens a folder selection dialog.</li>
+  <li><b>"Change"</b> – opens a folder selection dialog to set the default folder.</li>
 </ul>
 <h3>Cloning a repository</h3>
 <ul>
@@ -1293,7 +1432,9 @@ initialized.</p>
 <h2>7. Update assistant</h2>
 <p>Via the menu <b>"Assistants → Update assistant..."</b>, a guided dialog
 walks you through a complete update step by step, in the right order – the
-"Next" button only becomes active once the current step is done.</p>
+"Next" button only becomes active once the current step is done. Before it
+starts you choose the scope: <b>GitHub and AUR</b>, <b>GitHub only</b>, or
+<b>AUR only</b>.</p>
 <h3>Flow</h3>
 <ol>
   <li><b>Start page:</b> choose whether to create a GitHub release and/or
@@ -1385,8 +1526,6 @@ plain PKGBUILD fix with no version change.</p>
         "login_token_tooltip": "Enter your Personal Access Token (PAT).",
         "btn_connect": "Connect",
         "btn_connect_tooltip": "Connect to GitHub",
-        "btn_check_token": "Check token",
-        "btn_check_token_tooltip": "Checks whether the token is valid",
         "btn_create_token": "Create new token",
         "btn_create_token_tooltip": "Opens the GitHub page for creating a token",
 
@@ -1404,8 +1543,6 @@ plain PKGBUILD fix with no version change.</p>
         "local_group_title": "Local Repository",
         "local_default_folder_label": "Default folder:",
         "local_default_folder_placeholder": "No default folder set",
-        "btn_set_default": "Set as default",
-        "btn_set_default_tooltip": "Sets the current folder as default",
         "btn_change_default": "Change",
         "btn_change_default_tooltip": "Choose a new default folder",
         "btn_clone": "Clone repository",
@@ -1622,8 +1759,44 @@ plain PKGBUILD fix with no version change.</p>
             "version change)"
         ),
 
+        # ---- Settings ----
+        "menu_settings": "&Settings",
+        "wizard_github_only_title": "GitHub update assistant",
+        "wizard_intro_github_only": "GitHub-only mode: the AUR package is not touched. You can update the AUR later with the AUR update assistant.",
+        "wizard_aur_only_title": "AUR update assistant",
+        "wizard_intro_aur_only": "AUR-only mode: GitHub is not touched (no commit, push or release). The release/tag with the new version must already exist on GitHub, because the checksums are computed from it.",
+        "wizard_aur_only_version_hint": "The latest GitHub release version is suggested. You can change it.",
+        "wizard_intro_no_release_repo": "Note: No GitHub repository is selected in the list, so the \"Create GitHub release\" step cannot run. Please close the assistant, click the repository in the list and start it again.",
+        "menu_action_default_repo": "Set default repository...",
+        "menu_action_default_repo_tooltip": (
+            "Sets a repository that is always selected automatically on "
+            "start (after login). Takes precedence over \"Remember last "
+            "repository\". Only the name is stored in settings.json."
+        ),
+        "dlg_default_repo_title": "Default repository",
+        "dlg_default_repo_label": "Which repository should be preselected on start?",
+        "dlg_default_repo_none": "(None)",
+        "msg_default_repo_need_login": "Please log in first so the repository list can be loaded.",
+        "status_default_repo_set": "Default repository: {repo}",
+        "status_default_repo_cleared": "Default repository removed.",
+        "menu_action_remember_repo": "Remember last repository",
+        "menu_action_remember_repo_tooltip": (
+            "If enabled, the program remembers the last selected GitHub "
+            "repository and selects it again on the next start (after "
+            "login) and after refreshing the list. Only the repository "
+            "name is stored in settings.json."
+        ),
+
         # ---- Update assistant ----
         "menu_tools": "&Assistants",
+        "menu_assistant_full": "GitHub and AUR (complete update)",
+        "menu_assistant_github": "GitHub only",
+        "menu_assistant_aur": "AUR only",
+        "dlg_assistant_scope_title": "Update assistant",
+        "dlg_assistant_scope_label": "What should be updated?",
+        "dlg_assistant_scope_full": "GitHub and AUR (complete update)",
+        "dlg_assistant_scope_github": "GitHub only (commit, push, optional release)",
+        "dlg_assistant_scope_aur": "AUR only (GitHub is already up to date)",
         "menu_action_update_assistant": "Update assistant...",
         "menu_action_update_assistant_tooltip": (
             "Opens a guided dialog that walks you through a complete update "
@@ -1716,6 +1889,104 @@ plain PKGBUILD fix with no version change.</p>
         ),
         "wizard_aur_current_version": "Currently in the PKGBUILD: {version}",
         "wizard_summary_text": "The assistant has finished:",
+        "wizard_setup_progress": "Setup {current} of {total}",
+        "wizard_setup_connect_title": "Connection to GitHub",
+        "wizard_setup_connect_saved": "A saved connection exists (user: {username}).\n\nShould the assistant connect to GitHub with it now?",
+        "wizard_setup_connect_none": "No connection is saved yet. Enter your GitHub username and a personal access token – both are saved for the next start.",
+        "wizard_setup_connect_yes": "Yes, connect with the saved connection",
+        "wizard_setup_connect_other": "Use different credentials",
+        "wizard_setup_connect_btn": "Connect",
+        "wizard_setup_connect_user": "Username:",
+        "wizard_setup_connect_token": "Token:",
+        "wizard_setup_connect_create_token": "Create token...",
+        "wizard_setup_connecting": "Connecting to GitHub...",
+        "wizard_setup_connected": "Connected as {username}.",
+        "wizard_setup_connect_missing": "Please enter username and token.",
+        "wizard_setup_connect_fail_token": "The token was rejected (invalid, expired or missing the 'repo' scope). Suggestion: use \"Create token...\" to make a new token with the 'repo' scope and enter it here.",
+        "wizard_setup_connect_fail_network": "GitHub is not reachable. Suggestion: check your internet connection and try again.",
+        "wizard_setup_connect_fail_other": "The connection failed. Suggestion: check username and token and try again.",
+        "wizard_setup_skip_github": "Continue without GitHub (AUR only)",
+        "wizard_setup_repo_title": "Which GitHub repository do you want to open?",
+        "wizard_setup_repo_filter_placeholder": "Filter repositories...",
+        "wizard_setup_repo_refresh": "Refresh list",
+        "wizard_setup_repo_new": "Create new repository...",
+        "wizard_setup_repo_empty": "No repositories were found on this account. Suggestion: create one with \"Create new repository...\".",
+        "wizard_setup_repo_pick": "Please select a repository from the list.",
+        "wizard_setup_repo_count": "{count} repositories available.",
+        "wizard_setup_repo_loading": "Refreshing...",
+        "wizard_setup_folder_title": "Local folder for \"{name}\"",
+        "wizard_setup_folder_intro": "Choose which local folder should be used:",
+        "wizard_setup_folder_loaded": "Already loaded: {path}",
+        "wizard_setup_folder_found": "Local copy found: {path}",
+        "wizard_setup_folder_unlinked": "Existing folder (not yet linked to the repository): {path}",
+        "wizard_setup_folder_clone": "Suggestion: clone the repository to {path}",
+        "wizard_setup_folder_init": "Create an empty repository locally (git init)...",
+        "wizard_setup_folder_browse": "Choose another folder...",
+        "wizard_setup_folder_none_hint": "No local copy of \"{name}\" was found. Suggestion: clone the repository into the default folder.",
+        "wizard_setup_folder_no_default": "No default folder is set yet. Suggestion: set one first with \"Change default folder...\" – then the assistant can search and clone. Or pick another folder below.",
+        "wizard_setup_folder_exists_not_git": "The folder {path} already exists but is not a Git repository. Suggestion: choose \"Choose another folder...\" or rename the folder.",
+        "wizard_setup_folder_change_default": "Change default folder...",
+        "wizard_setup_folder_default_label": "Default folder: {path}",
+        "wizard_setup_folder_no_repo": "No GitHub repository selected. Go back and pick one.",
+        "wizard_setup_folder_not_git_title": "Not a Git repository",
+        "wizard_setup_folder_not_git_q": "The folder\n{path}\nis not a Git repository yet. Initialize it and link it to \"{name}\"?",
+        "wizard_setup_folder_relink_title": "Different remote",
+        "wizard_setup_folder_relink_q": "The folder\n{path}\nbelongs to a different remote. Change remote 'origin' to \"{name}\"?",
+        "wizard_setup_folder_running": "Working...",
+        "wizard_setup_folder_failed": "That did not work. Suggestion: check the error message or choose another option.",
+        "wizard_setup_folder_not_linked": "The folder could not be linked to \"{name}\". Choose another option.",
+        "wizard_setup_aur_title": "AUR package",
+        "wizard_setup_aur_intro": "Should an AUR package be updated as well? Choose the local AUR folder:",
+        "wizard_setup_aur_loaded": "Already loaded: {path}",
+        "wizard_setup_aur_found": "AUR folder found: {path}",
+        "wizard_setup_aur_browse": "Choose another AUR folder...",
+        "wizard_setup_aur_new": "Create a new AUR package for this repository...",
+        "wizard_setup_aur_skip": "Continue without AUR",
+        "wizard_setup_aur_none_hint": "No local AUR folder was found. Suggestion: pick an existing folder, create a new AUR package or skip the AUR part.",
+        "wizard_setup_aur_pkgbuild_hint": "Your project folder contains a PKGBUILD – there is probably an AUR package for it.",
+        "tip_btn_back": "Go back to the previous step. Completed steps stay completed.",
+        "tip_btn_next": "Continue to the next step. On action pages it becomes active once the step is done (or nothing was to do).",
+        "tip_btn_close": "Close the assistant. If steps are still open it asks first.",
+        "tip_connect_saved": "Connects using the username and token from the saved configuration (~/.config/github_manager/config.json).",
+        "tip_connect_other": "Shows the input fields to connect with a different account or token.",
+        "tip_connect_user": "Your GitHub username.",
+        "tip_connect_token": "Personal access token with the 'repo' scope. Saved after a successful connection for the next start.",
+        "tip_connect_create_token": "Opens the GitHub token page in your browser. Choose the 'repo' scope and copy the token here.",
+        "tip_connect_btn": "Connects to GitHub and loads the list of your repositories.",
+        "tip_skip_github": "Skips repository and folder and goes straight to the AUR selection. Useful if you only want to update the AUR package.",
+        "tip_repo_filter": "Filters the list by name as you type.",
+        "tip_repo_list": "All repositories of your account. 🔒 = private. Double-click selects and continues. An entry's tooltip shows the full name and description.",
+        "tip_repo_refresh": "Reloads the repository list from GitHub (e.g. after changes in the browser).",
+        "tip_repo_new": "Creates a new repository on GitHub and selects it afterwards.",
+        "tip_folder_list": "Which local folder should be used for this repository? \"Next\" runs the chosen option.",
+        "tip_folder_default": "The default folder is where the assistant looks for local copies and puts new clones.",
+        "tip_folder_loaded": "This folder is already loaded in the main window and belongs to the selected repository. Nothing left to do.",
+        "tip_folder_load": "Local copy of this repository ({path}). Detected via the remote URL (origin) and will be loaded.",
+        "tip_folder_load_link": "The folder {path} is a Git repository but not yet linked to \"{name}\". It will be loaded and remote 'origin' set (if it has a different remote, the assistant asks first).",
+        "tip_folder_clone": "Downloads \"{name}\" from GitHub to {path}. This may take a while depending on size. It continues automatically afterwards.",
+        "tip_folder_init": "The GitHub repository is empty. Creates a new local Git repository and links it to GitHub. You will be asked for the folder name.",
+        "tip_folder_browse": "Pick a folder yourself. If it is not a Git repository yet, the assistant offers to initialize and link it.",
+        "tip_aur_list": "The AUR package is updated after the GitHub part (new pkgver, checksums, commit, push). Choose the local AUR folder or skip this part.",
+        "tip_aur_loaded": "This AUR folder is already loaded in the main window. Nothing left to do.",
+        "tip_aur_load": "Folder with a PKGBUILD and a remote on aur.archlinux.org ({path}). It will be loaded and remembered as default AUR folder.",
+        "tip_aur_browse": "Pick a local AUR folder yourself. It must contain a PKGBUILD and be a Git repository.",
+        "tip_aur_new": "Creates a new AUR package for the selected GitHub repository (PKGBUILD skeleton, local Git repo, AUR remote).",
+        "tip_aur_skip": "Only the GitHub repository is updated. The AUR part is left out in this run.",
+        "tip_intro_release": "Creates a GitHub release with the new version as tag at the end. Only possible if a GitHub repository is selected.",
+        "tip_intro_aur": "Also updates the AUR package (pkgver, checksums) and pushes it to the AUR. Only possible if an AUR folder is loaded.",
+        "tip_intro_version": "The new version, e.g. 1.2.3. Used as release tag and as pkgver in the AUR. Suggestion: latest release (or AUR version) plus patch.",
+        "tip_bump_patch": "Increments the last number: 1.2.3 → 1.2.4 (bug fixes).",
+        "tip_bump_minor": "Increments the middle number: 1.2.3 → 1.3.0 (new features).",
+        "tip_bump_major": "Increments the first number: 1.2.3 → 2.0.0 (big or incompatible changes).",
+        "tip_commit_msg": "Briefly describe what changed. Required for the commit.",
+        "tip_commit_run": "Records all changes in the local repository as a new commit.",
+        "tip_push_run": "Sends the local commits to GitHub. The assistant checks the result and reports rejected or ineffective pushes.",
+        "tip_release_run": "Opens the dialog to create the GitHub release (tag, title, notes).",
+        "tip_release_skip": "Skips the release. You can create it later in the main window.",
+        "tip_aur_version_edit": "New pkgver for the PKGBUILD. Prefilled with the version from the first step.",
+        "tip_aur_version_run": "Writes the new version into the PKGBUILD and updates the checksums.",
+        "tip_aur_commit_msg": "Commit message for the AUR repository. Prefilled with the new version.",
+        "tip_aur_commit_push_run": "Commits the PKGBUILD change and pushes it to the AUR.",
 
         # ---- Status bar ----
         "status_ready": "Ready",
@@ -1739,7 +2010,6 @@ plain PKGBUILD fix with no version change.</p>
         "status_creating_release": "Creating release '{tag}'...",
         "status_release_created": "Release '{tag}' created",
         "status_release_failed": "Release creation failed",
-        "status_default_folder_set": "Default folder set: {folder}",
         "status_default_folder_changed": "Default folder changed: {folder}",
         "status_local_repo_loaded_no_remote": (
             "Local repository loaded: {folder} – no remote configured. "
@@ -1798,6 +2068,13 @@ plain PKGBUILD fix with no version change.</p>
         "msg_token_check_empty": "No token entered.",
         "msg_token_invalid_title": "Invalid token",
         "msg_token_invalid_text": "The token is invalid. Would you like to clear the field?",
+        "msg_token_delete_title": "Delete saved token",
+        "msg_token_delete_text": "Do you want to permanently delete the saved token from the configuration?",
+        "msg_token_save_title": "Save new token",
+        "msg_token_save_text": "The token has changed. Would you like to save the new token permanently?",
+        "status_token_deleted": "Saved token has been deleted.",
+        "status_token_saved": "New token has been saved.",
+        "status_token_not_saved": "New token will only be used for this session.",
         "msg_token_check_error": "Error during token check:\n{error}",
         "msg_create_token_title": "Create token",
         "msg_create_token_text": (
@@ -1923,6 +2200,8 @@ plain PKGBUILD fix with no version change.</p>
             "first and then push again?"
         ),
         "msg_push_error": "Push error:\n{error}",
+        "msg_push_403_hint": "Error 403 means GitHub knows you but does not allow writing. Possible causes and fixes:\n• The token has no write permission. Classic token: needs the \"repo\" scope (\"public_repo\" is enough for public repos). Fine-grained token: select the repository and set \"Contents: Read and write\".\n• The token has expired or was revoked. Create a new one with \"Create token...\" and reconnect.\n• If the repository belongs to an organization with SSO, authorize the token there under \"Configure SSO\".\n• The branch is protected (branch protection) and does not allow direct pushes.",
+        "msg_push_403_owner": "Note: you are signed in as \"{user}\", but the repository belongs to \"{owner}\". You must be a collaborator with write access there – or connect with the \"{owner}\" account.",
         "msg_pull_error": "Pull error:\n{error}",
         "msg_check_status_error": "Error during status check:\n{error}",
         "msg_remote_ahead_title": "Remote is ahead",
